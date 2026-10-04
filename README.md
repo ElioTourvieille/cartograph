@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cartograph
 
-## Getting Started
+A local app that reads a public GitHub repository (TypeScript or JavaScript) and draws it as a dependency map: folders as boxes, imports as lines between them. The interface is entirely in French.
 
-First, run the development server:
+Select a file and see what it imports, what imports it, and what breaks two levels out if it changes. Ask for an explanation and get a paragraph written from that file and its real neighbours. A chat panel lets you ask the repository a question and shows the lookups behind each answer.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Who it's for
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+A developer opening a codebase they didn't write, most often one they built with an agent across many sessions and can no longer hold in their head. They can read the code. What they can't see is its shape.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+An analysis belongs to an organization, not to whoever ran it. A repository is mapped once and everyone after that starts from the map.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## The rule everything rests on
 
-## Learn More
+**Every box and every line comes from really parsing the code.**
 
-To learn more about Next.js, take a look at the following resources:
+The AI explains and labels. It never decides that two files are connected, and it never walks the graph when arithmetic can do it. An edge exists because the parser resolved a real import to a real file. Anything unresolved is reported with a reason, never guessed. Absent beats approximate.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Cartograph also doesn't grade code: no scores, ratings or "issues found". It explains a codebase, it doesn't review one.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Stack
 
-## Deploy on Vercel
+- Next.js 16 (App Router), React 19, TypeScript strict
+- ts-morph for parsing
+- React Flow and dagre for the map
+- Clerk for sign-in and organizations
+- Convex for the database, server functions and live queries
+- Anthropic SDK through one wrapped client, traced with LangSmith
+- Tailwind v4
+- pnpm
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## How we work
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Spec driven. Nothing gets built without a spec, and one phase is built at a time.
+
+- [`CLAUDE.md`](CLAUDE.md): the rules, always in force.
+- [`docs/project-doc.md`](docs/project-doc.md): what the app is and the reasoning behind every decision.
+- [`docs/specs/`](docs/specs): one spec per phase (`phase-01.md` to `phase-13.md`). Each describes behaviour and an acceptance check, never filenames.
+
+The acceptance check is a list of things done by hand in a browser. There is no test runner or browser driver. Before a phase counts as done, types, lint and build must pass. When a phase comes out wrong, it is reset rather than patched.
+
+## Phases
+
+1. Auth and teams
+2. Dashboard and schema
+3. Parser
+4. Canvas
+5. Detail panel
+6. Graph maths, rail, insights
+7. Pipeline (URL to map)
+8. Next, Nest and React adapters
+9. CommonJS and Express
+10. AI explanations (cache and traces)
+11. Evals
+12. Chat agent
+13. Landing page
+
+## Status
+
+No phase is built yet. The repository holds the Create Next App scaffold, the project doc, the rules and the specs.
