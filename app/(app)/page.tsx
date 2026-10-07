@@ -1,16 +1,10 @@
-import { auth } from "@clerk/nextjs/server";
-import { OrgDiagnostic } from "@/components/org-diagnostic";
+import { AnalysesList } from "@/components/analyses-list";
 
-export default async function Home() {
-  const { orgId } = await auth();
-
+export default function Home() {
   return (
-    <div className="flex flex-col gap-1">
-      <p className="text-xs">
-        <span className="text-muted">Organisation vue par le serveur : </span>
-        <span className="font-mono">{orgId}</span>
-      </p>
-      <OrgDiagnostic />
+    <div className="flex flex-col gap-2">
+      <h1 className="text-xs font-semibold">Analyses</h1>
+      <AnalysesList />
     </div>
   );
 }

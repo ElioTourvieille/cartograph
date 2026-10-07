@@ -8,7 +8,11 @@
  * @module
  */
 
-import type * as diagnostic from "../diagnostic.js";
+import type * as analyses from "../analyses.js";
+import type * as lib_org from "../lib/org.js";
+import type * as lookup from "../lookup.js";
+import type * as orgData from "../orgData.js";
+import type * as seed from "../seed.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +21,11 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  diagnostic: typeof diagnostic;
+  analyses: typeof analyses;
+  "lib/org": typeof lib_org;
+  lookup: typeof lookup;
+  orgData: typeof orgData;
+  seed: typeof seed;
 }>;
 
 /**
