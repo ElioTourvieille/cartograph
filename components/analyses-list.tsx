@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 
 // What each state is called on screen. Colour is kept for what carries meaning
@@ -20,7 +20,10 @@ const DATE = new Intl.DateTimeFormat("fr-CH", {
 // Live: re-runs by itself when the organization switches. Nothing here filters
 // by organization; the query only ever returns the current one's rows.
 export function AnalysesList() {
-  const data = useQuery(api.analyses.list);
+  // Convex gets its token from Clerk asynchronously. Until it has one, the
+  // query would run anonymously and throw "Non connecté." — so wait.
+  const { isAuthenticated } = useConvexAuth();
+  const data = useQuery(api.analyses.list, isAuthenticated ? {} : "skip");
 
   if (data === undefined) return <p className="text-xs text-muted">…</p>;
 
