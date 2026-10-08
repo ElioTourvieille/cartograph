@@ -74,6 +74,15 @@ export function resolveImport(
         reason: excludedReason(target.slice(ctx.root.length + 1), ctx),
       };
     }
+    // Pointing into a directory we deliberately do not read (build output,
+    // dependencies): the file being absent says nothing, since the directory
+    // may simply not have been built. Excluded, not a failure. No edge either way.
+    if (target.startsWith(`${ctx.root}/`)) {
+      const rel = target.slice(ctx.root.length + 1);
+      if (rel.split("/").some((part) => IGNORED_DIRECTORY_NAMES.has(part))) {
+        return { outcome: "excluded", reason: "dossier-exclu" };
+      }
+    }
     return { outcome: "unresolved", reason: "fichier-introuvable" };
   }
 
