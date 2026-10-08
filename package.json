@@ -8,10 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "check:isolation": "node scripts/check-isolation.mjs",
+    "fold-report": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/fold-report.ts",
     "parse": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON parser/cli.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.9.10",
+    "@dagrejs/dagre": "3.1.1",
+    "@xyflow/react": "12.12.0",
     "convex": "^1.46.0",
     "next": "16.3.8",
     "react": "19.2.8",
