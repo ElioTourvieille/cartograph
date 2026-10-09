@@ -10,6 +10,7 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fold as foldFiles, type Fold } from "@/graph/fold";
+import { kindOf, type KindId } from "@/graph/kinds";
 import { layout } from "@/graph/layout";
 import { buildScene, type Source } from "@/graph/scene";
 import { highlight, type Direction, type Selection } from "@/graph/select";
@@ -41,6 +42,7 @@ export function Explorer({ data }: { data: ParseResult }) {
   // selection, the same open folders and the same hover.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [category, setCategory] = useState<KindId | null>(null);
   const [hover, setHover] = useState<Hover>({ path: null, node: null });
 
   const onToggle = useCallback(
@@ -84,7 +86,7 @@ export function Explorer({ data }: { data: ParseResult }) {
     // The app bar above is h-9 and <main> pads by 3 (0.75rem): cancel the
     // padding and fill what is left of the viewport.
     <div className="-m-3 flex" style={{ height: "calc(100vh - 2.25rem)" }}>
-      <Rail paths={data.files.map((f) => f.path)} />
+      <Rail paths={data.files.map((f) => f.path)} active={category} onPick={setCategory} />
       <div className="min-w-0 flex-1">
         <ReactFlowProvider>
           <Canvas
@@ -98,6 +100,7 @@ export function Explorer({ data }: { data: ParseResult }) {
             onClear={() => setSelection(null)}
             onHoverPath={onHoverPath}
             onHoverNode={onHoverNode}
+            category={category}
           />
         </ReactFlowProvider>
       </div>
@@ -119,6 +122,7 @@ type CanvasProps = {
   expanded: ReadonlySet<string>;
   selection: Selection | null;
   hover: Hover;
+  category: KindId | null;
   onToggle: (id: string) => void;
   onSelectFile: (path: string) => void;
   onClear: () => void;
@@ -132,6 +136,7 @@ function Canvas({
   expanded,
   selection,
   hover,
+  category,
   onToggle,
   onSelectFile,
   onClear,
@@ -142,6 +147,16 @@ function Canvas({
   // The node holding a hovered path, so a neighbour that has no row on screen
   // (its folder is closed, or it is under "+N") still lights up as its node.
   const hoverNode = hover.node ?? (hover.path === null ? null : (fold.nodeOf.get(hover.path) ?? null));
+  // How many files of each node are in the picked category. Counted over every
+  // file of the node, so the numbers on the map add up to the rail's count.
+  const matches = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (category === null) return counts;
+    for (const n of fold.nodes) {
+      counts.set(n.id, n.files.filter((p) => kindOf(p) === category).length);
+    }
+    return counts;
+  }, [fold, category]);
 
   const source = useMemo<Source>(
     () => ({ root: data.root, files: data.files, edges: data.edges }),
@@ -179,6 +194,8 @@ function Canvas({
             selectedPath: selection?.kind === "file" ? selection.path : null,
             hoverPath: hover.path,
             hoverNode,
+            category,
+            matches: matches.get(node.id) ?? 0,
             onHoverPath,
             onHoverNode,
             onToggle,
@@ -186,13 +203,19 @@ function Canvas({
           },
         };
       }),
-    [scene.nodes, placed, lit, selection, hover.path, hoverNode, onHoverPath, onHoverNode, onToggle, onSelectFile],
+    [scene.nodes, placed, lit, selection, hover.path, hoverNode, category, matches, onHoverPath, onHoverNode, onToggle, onSelectFile],
   );
 
   const edges = useMemo<FlowEdge[]>(
     () =>
       scene.edges.map((e) => {
         const direction = lit === null ? "idle" : (lit.edges.get(e.id) ?? null);
+        // With a category picked and nothing selected, a line fades unless one
+        // of the imports it stands for touches a file of that category.
+        const faded =
+          category !== null &&
+          lit === null &&
+          !e.members.some((i) => kindOf(data.edges[i].from) === category || kindOf(data.edges[i].to) === category);
         const look = STROKE[direction ?? "idle"];
         return {
           id: e.id,
@@ -205,12 +228,12 @@ function Canvas({
           style: {
             stroke: look.stroke,
             strokeWidth: look.width,
-            opacity: direction === null ? 0.1 : direction === "idle" ? 0.55 : 1,
+            opacity: faded || direction === null ? 0.1 : direction === "idle" ? 0.55 : 1,
           },
           markerEnd: { type: MarkerType.ArrowClosed, color: look.arrow, width: 14, height: 14 },
         };
       }),
-    [scene.edges, lit],
+    [scene.edges, lit, category, data.edges],
   );
 
   // Opening or closing a folder refits the view, and only ever zooms out: the
