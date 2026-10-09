@@ -14,6 +14,7 @@ import { layout } from "@/graph/layout";
 import { buildScene, type Source } from "@/graph/scene";
 import { highlight, type Direction, type Selection } from "@/graph/select";
 import type { ParseResult } from "@/parser/types";
+import { DetailPane, type Hover } from "./detail-pane";
 import { FolderNode, type FolderFlowNode } from "./folder-node";
 import { Rail } from "./rail";
 
@@ -36,41 +37,11 @@ const STROKE: Record<Direction | "idle", { stroke: string; arrow: string; width:
 
 export function Explorer({ data }: { data: ParseResult }) {
   const fold = useMemo(() => foldFiles(data.files), [data.files]);
-
-  return (
-    // The app bar above is h-9 and <main> pads by 3 (0.75rem): cancel the
-    // padding and fill what is left of the viewport.
-    <div className="-m-3 flex" style={{ height: "calc(100vh - 2.25rem)" }}>
-      <Rail paths={data.files.map((f) => f.path)} />
-      <div className="min-w-0 flex-1">
-        <ReactFlowProvider>
-          <Canvas data={data} fold={fold} />
-        </ReactFlowProvider>
-      </div>
-      <aside
-        aria-label="Détail"
-        className="w-72 shrink-0 border-l border-border bg-surface"
-      />
-    </div>
-  );
-}
-
-function Canvas({ data, fold }: { data: ParseResult; fold: Fold }) {
-  const flow = useReactFlow();
+  // Held here, above the map and the pane, so both read and write the same
+  // selection, the same open folders and the same hover.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [selection, setSelection] = useState<Selection | null>(null);
-
-  const source = useMemo<Source>(
-    () => ({ root: data.root, files: data.files, edges: data.edges }),
-    [data],
-  );
-  const scene = useMemo(() => buildScene(source, fold, expanded), [source, fold, expanded]);
-  // Positions depend on the structure only, so selecting never moves anything.
-  const placed = useMemo(() => layout(scene), [scene]);
-  const lit = useMemo(
-    () => (selection === null ? null : highlight(selection, data.edges, fold, scene)),
-    [selection, data.edges, fold, scene],
-  );
+  const [hover, setHover] = useState<Hover>({ path: null, node: null });
 
   const onToggle = useCallback(
     (id: string) => {
@@ -88,6 +59,100 @@ function Canvas({ data, fold }: { data: ParseResult; fold: Fold }) {
   const onSelectFile = useCallback(
     (path: string) => setSelection({ kind: "file", path }),
     [],
+  );
+  // A path clicked in the pane: select it, and open the folder holding it so
+  // its row is there on the map to be seen.
+  const onSelectFromPane = useCallback(
+    (path: string) => {
+      setSelection({ kind: "file", path });
+      const node = fold.nodeOf.get(path);
+      if (node === undefined) return;
+      setExpanded((prev) => (prev.has(node) ? prev : new Set(prev).add(node)));
+    },
+    [fold],
+  );
+  const onHoverPath = useCallback(
+    (path: string | null) => setHover({ path, node: null }),
+    [],
+  );
+  const onHoverNode = useCallback(
+    (node: string | null) => setHover({ path: null, node }),
+    [],
+  );
+
+  return (
+    // The app bar above is h-9 and <main> pads by 3 (0.75rem): cancel the
+    // padding and fill what is left of the viewport.
+    <div className="-m-3 flex" style={{ height: "calc(100vh - 2.25rem)" }}>
+      <Rail paths={data.files.map((f) => f.path)} />
+      <div className="min-w-0 flex-1">
+        <ReactFlowProvider>
+          <Canvas
+            data={data}
+            fold={fold}
+            expanded={expanded}
+            selection={selection}
+            hover={hover}
+            onToggle={onToggle}
+            onSelectFile={onSelectFile}
+            onClear={() => setSelection(null)}
+            onHoverPath={onHoverPath}
+            onHoverNode={onHoverNode}
+          />
+        </ReactFlowProvider>
+      </div>
+      <DetailPane
+        data={data}
+        fold={fold}
+        selection={selection}
+        hover={hover}
+        onSelectFile={onSelectFromPane}
+        onHover={onHoverPath}
+      />
+    </div>
+  );
+}
+
+type CanvasProps = {
+  data: ParseResult;
+  fold: Fold;
+  expanded: ReadonlySet<string>;
+  selection: Selection | null;
+  hover: Hover;
+  onToggle: (id: string) => void;
+  onSelectFile: (path: string) => void;
+  onClear: () => void;
+  onHoverPath: (path: string | null) => void;
+  onHoverNode: (id: string | null) => void;
+};
+
+function Canvas({
+  data,
+  fold,
+  expanded,
+  selection,
+  hover,
+  onToggle,
+  onSelectFile,
+  onClear,
+  onHoverPath,
+  onHoverNode,
+}: CanvasProps) {
+  const flow = useReactFlow();
+  // The node holding a hovered path, so a neighbour that has no row on screen
+  // (its folder is closed, or it is under "+N") still lights up as its node.
+  const hoverNode = hover.node ?? (hover.path === null ? null : (fold.nodeOf.get(hover.path) ?? null));
+
+  const source = useMemo<Source>(
+    () => ({ root: data.root, files: data.files, edges: data.edges }),
+    [data],
+  );
+  const scene = useMemo(() => buildScene(source, fold, expanded), [source, fold, expanded]);
+  // Positions depend on the structure only, so selecting never moves anything.
+  const placed = useMemo(() => layout(scene), [scene]);
+  const lit = useMemo(
+    () => (selection === null ? null : highlight(selection, data.edges, fold, scene)),
+    [selection, data.edges, fold, scene],
   );
 
   const nodes = useMemo<FolderFlowNode[]>(
@@ -112,12 +177,16 @@ function Canvas({ data, fold }: { data: ParseResult; fold: Fold }) {
             litFiles: lit === null ? null : lit.files,
             selected: selection?.kind === "node" && selection.id === node.id,
             selectedPath: selection?.kind === "file" ? selection.path : null,
+            hoverPath: hover.path,
+            hoverNode,
+            onHoverPath,
+            onHoverNode,
             onToggle,
             onSelectFile,
           },
         };
       }),
-    [scene.nodes, placed, lit, selection, onToggle, onSelectFile],
+    [scene.nodes, placed, lit, selection, hover.path, hoverNode, onHoverPath, onHoverNode, onToggle, onSelectFile],
   );
 
   const edges = useMemo<FlowEdge[]>(
@@ -178,7 +247,7 @@ function Canvas({ data, fold }: { data: ParseResult; fold: Fold }) {
       nodesConnectable={false}
       elementsSelectable={false}
       zoomOnDoubleClick={false}
-      onPaneClick={() => setSelection(null)}
+      onPaneClick={onClear}
     />
   );
 }
