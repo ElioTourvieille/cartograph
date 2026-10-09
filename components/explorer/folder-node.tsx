@@ -1,6 +1,7 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
+import type { KindId } from "@/graph/kinds";
 import type { SceneNode } from "@/graph/scene";
 import { HEADER, MORE_HANDLE, NODE_HANDLE, ROW, rowHandle } from "@/graph/scene";
 
@@ -20,6 +21,10 @@ export type FolderData = {
   selectedPath: string | null;
   /** A path the pointer is over, here or in the detail pane. */
   hoverPath: string | null;
+  /** The category picked in the rail, or null. Dims what is not in it. */
+  category: KindId | null;
+  /** How many of this node's files are in that category (every file, not just the rows shown). */
+  matches: number;
   /** The node that path (or the hovered node) belongs to. */
   hoverNode: string | null;
   onHoverPath: (path: string | null) => void;
@@ -44,7 +49,19 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
     : hovered
       ? "border-foreground"
       : "border-border";
-  const opacity = data.dim ? 0.2 : 1;
+  // A node with nothing in the picked category stays on screen, faded.
+  const none = data.category !== null && data.matches === 0;
+  const opacity = data.dim ? 0.2 : none ? 0.35 : 1;
+  const count =
+    data.category === null ? null : (
+      <span
+        className="absolute right-1.5 top-1 font-mono text-[10px] font-semibold"
+        style={{ color: `var(--kind-${data.category})` }}
+        title={`${data.matches} fichiers de cette catégorie`}
+      >
+        {data.matches}
+      </span>
+    );
 
   if (!node.open) {
     return (
@@ -54,9 +71,10 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
         onMouseEnter={() => data.onHoverNode(node.id)}
         onMouseLeave={() => data.onHoverNode(null)}
         title={`Ouvrir ${node.id === "." ? node.label : node.id}`}
-        className={`flex h-full w-full cursor-pointer flex-col items-center justify-center gap-0.5 rounded border bg-surface px-2 text-center ${ring}`}
+        className={`relative flex h-full w-full cursor-pointer flex-col items-center justify-center gap-0.5 rounded border bg-surface px-2 text-center ${ring}`}
         style={{ opacity }}
       >
+        {count}
         <span className="max-w-full truncate font-mono text-[11px] font-semibold">
           {node.label}
         </span>
@@ -78,9 +96,10 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
         onMouseEnter={() => data.onHoverNode(node.id)}
         onMouseLeave={() => data.onHoverNode(null)}
         title="Refermer"
-        className="flex w-full cursor-pointer flex-col items-start justify-center gap-0.5 border-b border-border bg-surface px-2 text-left"
+        className="relative flex w-full cursor-pointer flex-col items-start justify-center gap-0.5 border-b border-border bg-surface px-2 text-left"
         style={{ height: HEADER }}
       >
+        {count}
         <span className="max-w-full truncate font-mono text-[11px] font-semibold">
           {node.label}
         </span>
@@ -104,7 +123,10 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
             onMouseLeave={() => data.onHoverPath(null)}
             title={row.path}
             className={`flex w-full cursor-pointer items-center gap-1.5 px-2 text-left ${picked ? "bg-accent/15" : hot ? "bg-foreground/10" : ""}`}
-            style={{ height: ROW, opacity: lit ? 1 : 0.25 }}
+            style={{
+              height: ROW,
+              opacity: lit && (data.category === null || row.kind === data.category) ? 1 : 0.25,
+            }}
           >
             <span
               className="size-1.5 shrink-0 rounded-full"

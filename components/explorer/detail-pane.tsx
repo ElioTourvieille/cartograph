@@ -4,13 +4,18 @@ import { useMemo, useState, type ReactNode } from "react";
 import {
   fileDetail,
   indexEdges,
+  LIST_LIMIT,
   nodeDetail,
   summarize,
+  type Index,
   type Ranked,
 } from "@/graph/detail";
 import type { Fold } from "@/graph/fold";
+import { insights, SENTENCE, type Insights } from "@/graph/insights";
 import { KINDS } from "@/graph/kinds";
+import { DEFAULT_DEPTH, reach, type Way } from "@/graph/reach";
 import type { Selection } from "@/graph/select";
+import { fallbackAdapter } from "@/parser/adapter";
 import type { ParseResult } from "@/parser/types";
 
 // The right-hand column. It is always there, and it always says something:
@@ -38,6 +43,10 @@ export function DetailPane({ data, fold, selection, hover, onSelectFile, onHover
   const [tab, setTab] = useState<Tab>("structure");
   const index = useMemo(() => indexEdges(data.edges), [data.edges]);
   const summary = useMemo(() => summarize(data), [data]);
+  const found = useMemo(
+    () => insights(data, fallbackAdapter.reachedByFramework),
+    [data],
+  );
 
   const hot = (path: string): boolean =>
     hover.path === path ||
@@ -51,7 +60,7 @@ export function DetailPane({ data, fold, selection, hover, onSelectFile, onHover
     >
       {selection === null ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <Summary summary={summary} {...link} />
+          <Summary summary={summary} found={found} {...link} />
         </div>
       ) : (
         <>
@@ -67,7 +76,12 @@ export function DetailPane({ data, fold, selection, hover, onSelectFile, onHover
             {tab === "explication" ? (
               <p className="text-xs text-muted">Aucune explication pour l&apos;instant.</p>
             ) : selection.kind === "file" ? (
-              <FileView detail={fileDetail(data, index, selection.path)} {...link} />
+              <FileView
+                key={selection.path}
+                detail={fileDetail(data, index, selection.path)}
+                index={index}
+                {...link}
+              />
             ) : (
               <NodeView detail={nodeDetail(fold, selection.id)} />
             )}
@@ -109,7 +123,11 @@ type LinkProps = {
   onHover: (path: string | null) => void;
 };
 
-function Summary({ summary, ...link }: { summary: ReturnType<typeof summarize> } & LinkProps) {
+function Summary({
+  summary,
+  found,
+  ...link
+}: { summary: ReturnType<typeof summarize>; found: Insights } & LinkProps) {
   return (
     <div className="flex flex-col gap-3">
       <div>
@@ -141,7 +159,84 @@ function Summary({ summary, ...link }: { summary: ReturnType<typeof summarize> }
       <p className="text-xs text-muted">
         {summary.unidentified} fichiers qu&apos;aucune convention n&apos;a identifiés.
       </p>
+
+      <InsightsPanel found={found} {...link} />
     </div>
+  );
+}
+
+// Collapsed until opened, and below everything else: this explains a codebase,
+// it is not the first thing anyone sees and it never grades one. What leads is
+// the explanatory kind (where to start reading); cycles and length read closer
+// to a verdict, so they go underneath.
+function InsightsPanel({ found, ...link }: { found: Insights } & LinkProps) {
+  return (
+    <details className="border-t border-border pt-2">
+      <summary className="cursor-pointer text-[10px] font-semibold uppercase text-muted">
+        Repères
+      </summary>
+      <div className="mt-2 flex flex-col gap-3">
+        <InsightSection
+          title="Rien ne les importe"
+          sentence={SENTENCE.unimported}
+          items={found.unimported}
+          {...link}
+        />
+        <InsightSection
+          title="Très importés"
+          sentence={SENTENCE.hub}
+          items={found.hubs}
+          {...link}
+        />
+        <Section title={`Boucles d'imports (${found.cycles.length})`}>
+          <p className="mb-1 text-[10px] text-muted">{SENTENCE.cycle}</p>
+          {found.cycles.length === 0 && <p className="text-xs text-muted">Aucune.</p>}
+          {found.cycles.slice(0, LIST_LIMIT).map((cycle) => (
+            <div key={cycle.files[0]} className="mb-2">
+              <p className="text-[10px] text-muted">{cycle.size} fichiers concernés</p>
+              <ul className="flex flex-col">
+                {cycle.files.map((path, i) => (
+                  <li key={path}>
+                    <PathButton path={path} prefix={i === 0 ? "" : "→ "} {...link} />
+                  </li>
+                ))}
+                <li className="px-1 text-[10px] text-muted">→ retour à {cycle.files[0]}</li>
+              </ul>
+            </div>
+          ))}
+        </Section>
+        <InsightSection
+          title="Très longs"
+          sentence={SENTENCE.long}
+          items={found.long}
+          {...link}
+        />
+      </div>
+    </details>
+  );
+}
+
+function InsightSection({
+  title,
+  sentence,
+  items,
+  ...link
+}: {
+  title: string;
+  sentence: string;
+  items: { path: string; value: number }[];
+} & LinkProps) {
+  return (
+    <Section title={`${title} (${items.length})`}>
+      <p className="mb-1 text-[10px] text-muted">{sentence}</p>
+      <PathList
+        items={items.slice(0, LIST_LIMIT).map((i) => ({ path: i.path, count: i.value }))}
+        {...link}
+      />
+      {items.length > LIST_LIMIT && (
+        <p className="mt-1 text-[10px] text-muted">et {items.length - LIST_LIMIT} de plus</p>
+      )}
+    </Section>
   );
 }
 
@@ -189,10 +284,11 @@ function PathList({ items, ...link }: { items: Ranked[] } & LinkProps) {
 function PathButton({
   path,
   count,
+  prefix = "",
   hot,
   onSelectFile,
   onHover,
-}: { path: string; count?: number } & LinkProps) {
+}: { path: string; count?: number; prefix?: string } & LinkProps) {
   return (
     <button
       type="button"
@@ -202,7 +298,7 @@ function PathButton({
       onMouseLeave={() => onHover(null)}
       className={`flex w-full cursor-pointer items-baseline gap-2 rounded-sm px-1 py-0.5 text-left ${hot(path) ? "bg-foreground/10" : "hover:bg-foreground/5"}`}
     >
-      <span className="min-w-0 flex-1 break-all font-mono text-[11px] leading-tight">{path}</span>
+      <span className="min-w-0 flex-1 break-all font-mono text-[11px] leading-tight">{prefix}{path}</span>
       {count !== undefined && <span className="shrink-0 text-[10px] text-muted">{count}</span>}
     </button>
   );
@@ -210,8 +306,9 @@ function PathButton({
 
 function FileView({
   detail,
+  index,
   ...link
-}: { detail: ReturnType<typeof fileDetail> } & LinkProps) {
+}: { detail: ReturnType<typeof fileDetail>; index: Index } & LinkProps) {
   if (detail === null) return null;
   const kind = KINDS.find((k) => k.id === detail.kind)?.label ?? detail.kind;
   return (
@@ -232,6 +329,8 @@ function FileView({
           <Fact label="Importé par" value={String(detail.dependents.length)} />
         </dl>
       </div>
+
+      <ReachSection path={detail.path} index={index} {...link} />
 
       <Section title={`Importe (${detail.imports.length})`}>
         <Neighbours paths={detail.imports} {...link} />
@@ -281,5 +380,128 @@ function NodeView({ detail }: { detail: ReturnType<typeof nodeDetail> }) {
         </ul>
       </Section>
     </div>
+  );
+}
+
+// Blast radius and dependency chain: one walk, two directions. The answer is
+// computed from the edge list already in the browser, so it appears at once.
+function ReachSection({
+  path,
+  index,
+  ...link
+}: { path: string; index: Index } & LinkProps) {
+  const [way, setWay] = useState<Way | null>(null);
+  const [depth, setDepth] = useState(DEFAULT_DEPTH);
+  const reached = useMemo(
+    () => (way === null ? [] : reach(index, path, way, depth)),
+    [index, path, way, depth],
+  );
+
+  const toggle = (next: Way) => setWay((current) => (current === next ? null : next));
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex gap-1.5">
+        <ReachButton active={way === "dependents"} onClick={() => toggle("dependents")}>
+          Rayon d&apos;impact
+        </ReachButton>
+        <ReachButton active={way === "dependencies"} onClick={() => toggle("dependencies")}>
+          Chaîne de dépendances
+        </ReachButton>
+      </div>
+
+      {way !== null && (
+        <div>
+          <div className="mb-1 flex items-center justify-between text-[10px] text-muted">
+            <span>
+              {reached.length} fichiers, jusqu&apos;à {depth} niveaux
+            </span>
+            <span className="flex items-center gap-1">
+              <StepButton
+                label="Un niveau de moins"
+                disabled={depth <= 1}
+                onClick={() => setDepth(depth - 1)}
+              >
+                −
+              </StepButton>
+              <StepButton
+                label="Un niveau de plus"
+                disabled={depth >= MAX_DEPTH}
+                onClick={() => setDepth(depth + 1)}
+              >
+                +
+              </StepButton>
+            </span>
+          </div>
+          {Array.from({ length: depth }, (_, i) => i + 1).map((level) => {
+            const at = reached.filter((r) => r.distance === level);
+            if (at.length === 0) return null;
+            return (
+              <div key={level} className="mb-1.5">
+                <p className="text-[10px] font-semibold uppercase text-muted">
+                  Niveau {level} ({at.length})
+                </p>
+                <ul className="flex flex-col">
+                  {at.map((r) => (
+                    <li key={r.path}>
+                      <PathButton path={r.path} {...link} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+          {reached.length === 0 && <p className="text-xs text-muted">Aucun.</p>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** The most levels the pane offers; deeper is most of the repository. */
+const MAX_DEPTH = 5;
+
+function ReachButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`flex-1 cursor-pointer rounded border px-2 py-1 text-[11px] ${active ? "border-accent font-semibold" : "border-border"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StepButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="size-4 cursor-pointer rounded border border-border leading-none disabled:cursor-default disabled:opacity-40"
+    >
+      {children}
+    </button>
   );
 }
