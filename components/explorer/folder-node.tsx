@@ -18,6 +18,12 @@ export type FolderData = {
   litFiles: ReadonlySet<string> | null;
   selected: boolean;
   selectedPath: string | null;
+  /** A path the pointer is over, here or in the detail pane. */
+  hoverPath: string | null;
+  /** The node that path (or the hovered node) belongs to. */
+  hoverNode: string | null;
+  onHoverPath: (path: string | null) => void;
+  onHoverNode: (id: string | null) => void;
   onToggle: (id: string) => void;
   onSelectFile: (path: string) => void;
 };
@@ -28,7 +34,16 @@ const handleStyle = { opacity: 0, width: 1, height: 1, minWidth: 0, minHeight: 0
 
 export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
   const { node } = data;
-  const ring = data.selected ? "border-accent" : "border-border";
+  // The node is outlined for a hover only when no row on screen can show it:
+  // a closed folder, or a file that sits under "et N de plus".
+  const hovered =
+    data.hoverNode === node.id &&
+    (!node.open || !node.rows.some((r) => r.path === data.hoverPath));
+  const ring = data.selected
+    ? "border-accent"
+    : hovered
+      ? "border-foreground"
+      : "border-border";
   const opacity = data.dim ? 0.2 : 1;
 
   if (!node.open) {
@@ -36,6 +51,8 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
       <button
         type="button"
         onClick={() => data.onToggle(node.id)}
+        onMouseEnter={() => data.onHoverNode(node.id)}
+        onMouseLeave={() => data.onHoverNode(null)}
         title={`Ouvrir ${node.id === "." ? node.label : node.id}`}
         className={`flex h-full w-full cursor-pointer flex-col items-center justify-center gap-0.5 rounded border bg-surface px-2 text-center ${ring}`}
         style={{ opacity }}
@@ -58,6 +75,8 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
       <button
         type="button"
         onClick={() => data.onToggle(node.id)}
+        onMouseEnter={() => data.onHoverNode(node.id)}
+        onMouseLeave={() => data.onHoverNode(null)}
         title="Refermer"
         className="flex w-full cursor-pointer flex-col items-start justify-center gap-0.5 border-b border-border bg-surface px-2 text-left"
         style={{ height: HEADER }}
@@ -75,13 +94,16 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
       {node.rows.map((row) => {
         const lit = data.litFiles === null || data.litFiles.has(row.path);
         const picked = data.selectedPath === row.path;
+        const hot = data.hoverPath === row.path;
         return (
           <button
             key={row.path}
             type="button"
             onClick={() => data.onSelectFile(row.path)}
+            onMouseEnter={() => data.onHoverPath(row.path)}
+            onMouseLeave={() => data.onHoverPath(null)}
             title={row.path}
-            className={`flex w-full cursor-pointer items-center gap-1.5 px-2 text-left ${picked ? "bg-accent/15" : ""}`}
+            className={`flex w-full cursor-pointer items-center gap-1.5 px-2 text-left ${picked ? "bg-accent/15" : hot ? "bg-foreground/10" : ""}`}
             style={{ height: ROW, opacity: lit ? 1 : 0.25 }}
           >
             <span
