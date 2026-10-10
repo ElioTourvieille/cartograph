@@ -1,7 +1,7 @@
 // The shape the parser writes. Everything built after phase 3 reads this, so
 // changing it is a contract change: bump SCHEMA_VERSION.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export type EdgeKind = "import" | "reexport" | "dynamic";
 
@@ -49,7 +49,9 @@ export type UnresolvedReason =
   | "fichier-introuvable"
   | "alias-sans-correspondance"
   | "introuvable-sous-baseurl"
-  | "specifier-non-litteral";
+  | "specifier-non-litteral"
+  | "paquet-non-declare"
+  | "paquet-interne-non-resolu";
 
 export type Occurrence = {
   from: string;

@@ -1,4 +1,4 @@
-import type { ParseResult } from "../parser/types.ts";
+import type { Graph } from "./types.ts";
 
 // Insights: four kinds of fact about the edge list and the file list. No model
 // is involved, not to find one and not to word one: each kind has one fixed
@@ -44,7 +44,7 @@ const byValueThenPath = (a: Item, b: Item): number =>
  * graph's blind spot is not a finding about the code.
  */
 export function insights(
-  data: ParseResult,
+  data: Graph,
   isReachedByFramework: (path: string) => boolean,
 ): Insights {
   const unimported = data.files
@@ -70,7 +70,7 @@ export function insights(
 
 // --- cycles -----------------------------------------------------------------
 
-function findCycles(data: ParseResult): Cycle[] {
+function findCycles(data: Graph): Cycle[] {
   const next = new Map<string, string[]>();
   for (const e of data.edges) {
     const list = next.get(e.from);

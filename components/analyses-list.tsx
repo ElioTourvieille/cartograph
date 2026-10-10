@@ -1,7 +1,9 @@
 "use client";
 
 import { useConvexAuth, useQuery } from "convex/react";
+import Link from "next/link";
 import { api } from "@/convex/_generated/api";
+import { STAGE_LABEL } from "@/components/stages";
 
 // What each state is called on screen. Colour is kept for what carries meaning
 // elsewhere (direction, kind), so state is text only.
@@ -48,9 +50,20 @@ export function AnalysesList() {
         <tbody>
           {data.rows.map((row) => (
             <tr key={row.id} className="border-b border-border align-top">
-              <td className="py-1 pr-3 font-mono">{row.repo ?? "—"}</td>
+              <td className="py-1 pr-3 font-mono">
+                {row.repo === null ? (
+                  "—"
+                ) : (
+                  <Link href={`/analyses/${row.id}`} className="hover:underline">
+                    {row.repo}
+                  </Link>
+                )}
+              </td>
               <td className="py-1 pr-3">
                 {STATUS_LABEL[row.status]}
+                {(row.status === "queued" || row.status === "parsing") && row.stage !== null && (
+                  <span className="text-muted"> : {STAGE_LABEL[row.stage]}</span>
+                )}
                 {row.error !== null && (
                   <span className="text-muted"> : {row.error}</span>
                 )}

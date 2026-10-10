@@ -8,15 +8,17 @@ import {
   useReactFlow,
   type Edge as FlowEdge,
 } from "@xyflow/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fold as foldFiles, type Fold } from "@/graph/fold";
 import { kindOf, type KindId } from "@/graph/kinds";
 import { layout } from "@/graph/layout";
 import { buildScene, type Source } from "@/graph/scene";
 import { highlight, type Direction, type Selection } from "@/graph/select";
-import type { ParseResult } from "@/parser/types";
+import type { StoredCoverage } from "@/graph/coverage";
+import type { Graph } from "@/graph/types";
 import { DetailPane, type Hover } from "./detail-pane";
 import { FolderNode, type FolderFlowNode } from "./folder-node";
+import { CoverageBanner } from "./coverage-banner";
 import { Rail } from "./rail";
 
 // The shell the explorer lives in, settled here: a narrow rail on the left, the
@@ -36,7 +38,18 @@ const STROKE: Record<Direction | "idle", { stroke: string; arrow: string; width:
   inside: { stroke: "var(--accent)", arrow: "#2563eb", width: 1.6 },
 };
 
-export function Explorer({ data }: { data: ParseResult }) {
+export function Explorer({
+  data,
+  coverage,
+  commit,
+  action,
+}: {
+  data: Graph;
+  coverage?: StoredCoverage;
+  commit?: string;
+  /** Rendered in the coverage banner, beside its own controls. */
+  action?: ReactNode;
+}) {
   const fold = useMemo(() => foldFiles(data.files), [data.files]);
   // Held here, above the map and the pane, so both read and write the same
   // selection, the same open folders and the same hover.
@@ -87,22 +100,27 @@ export function Explorer({ data }: { data: ParseResult }) {
     // padding and fill what is left of the viewport.
     <div className="-m-3 flex" style={{ height: "calc(100vh - 2.25rem)" }}>
       <Rail paths={data.files.map((f) => f.path)} active={category} onPick={setCategory} />
-      <div className="min-w-0 flex-1">
-        <ReactFlowProvider>
-          <Canvas
-            data={data}
-            fold={fold}
-            expanded={expanded}
-            selection={selection}
-            hover={hover}
-            onToggle={onToggle}
-            onSelectFile={onSelectFile}
-            onClear={() => setSelection(null)}
-            onHoverPath={onHoverPath}
-            onHoverNode={onHoverNode}
-            category={category}
-          />
-        </ReactFlowProvider>
+      <div className="flex min-w-0 flex-1 flex-col">
+        {coverage !== undefined && <CoverageBanner coverage={coverage} commit={commit} action={action} />}
+        <div className="relative min-h-0 flex-1">
+          <div className="absolute inset-0">
+            <ReactFlowProvider>
+              <Canvas
+                data={data}
+                fold={fold}
+                expanded={expanded}
+                selection={selection}
+                hover={hover}
+                onToggle={onToggle}
+                onSelectFile={onSelectFile}
+                onClear={() => setSelection(null)}
+                onHoverPath={onHoverPath}
+                onHoverNode={onHoverNode}
+                category={category}
+              />
+            </ReactFlowProvider>
+          </div>
+        </div>
       </div>
       <DetailPane
         data={data}
@@ -117,7 +135,7 @@ export function Explorer({ data }: { data: ParseResult }) {
 }
 
 type CanvasProps = {
-  data: ParseResult;
+  data: Graph;
   fold: Fold;
   expanded: ReadonlySet<string>;
   selection: Selection | null;

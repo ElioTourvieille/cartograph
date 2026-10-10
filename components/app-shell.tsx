@@ -1,4 +1,5 @@
 import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { ThemeControl } from "@/components/theme-control";
 
@@ -8,7 +9,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="flex h-9 shrink-0 items-center gap-3 border-b border-border bg-surface px-3">
-        <span className="text-xs font-semibold">Cartograph</span>
+        <Link href="/" className="text-xs font-semibold">
+          Cartograph
+        </Link>
         <OrganizationSwitcher hidePersonal />
         <div className="ml-auto flex items-center gap-3">
           <ThemeControl />

@@ -1,6 +1,6 @@
 // Numbers for the canvas acceptance check, from a terminal:
-//   pnpm fold-report [résultat.json]
-// Defaults to the checked-in preview data. Exits 1 if a rule is broken.
+//   pnpm fold-report <résultat.json>
+// Takes a parser output file. Exits 1 if a rule is broken.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -14,7 +14,12 @@ import {
 } from "../graph/scene.ts";
 import { parseResult } from "../parser/validate.ts";
 
-const file = resolve(process.argv[2] ?? "preview/zod-src.json");
+const arg = process.argv[2];
+if (arg === undefined) {
+  console.error("Usage : pnpm fold-report <résultat.json>  (le fichier produit par pnpm parse <dossier> --out …)");
+  process.exit(2);
+}
+const file = resolve(arg);
 const data = parseResult(JSON.parse(readFileSync(file, "utf8")));
 const f = fold(data.files);
 const source = { root: data.root, files: data.files, edges: data.edges };

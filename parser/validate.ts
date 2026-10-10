@@ -171,6 +171,8 @@ export function parseResult(input: unknown): ParseResult {
         "alias-sans-correspondance",
         "introuvable-sous-baseurl",
         "specifier-non-litteral",
+        "paquet-non-declare",
+        "paquet-interne-non-resolu",
       ],
       "$.coverage.unresolved",
     ),

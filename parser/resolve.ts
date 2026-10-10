@@ -1,4 +1,5 @@
 import { existsSync, statSync } from "node:fs";
+import { builtinModules } from "node:module";
 import { dirname, isAbsolute, resolve } from "node:path";
 import * as tsm from "ts-morph";
 import type {
@@ -19,6 +20,12 @@ export type ResolveContext = {
   root: string;
   nodes: ReadonlySet<string>;
   skipped: ReadonlyMap<string, SkippedFile>;
+  /** Package names the repository declares in its package.json files. */
+  declared: ReadonlySet<string>;
+  /** Packages that live inside the repository: name -> its directory, relative
+   *  to the root ("." for the root itself). */
+  internal: ReadonlyMap<string, string>;
+  /** The compiler options of the tsconfig nearest to the file being resolved. */
   options: tsm.ts.CompilerOptions;
   host: tsm.ts.ModuleResolutionHost;
   cache: tsm.ts.ModuleResolutionCache;
@@ -51,14 +58,12 @@ export function resolveImport(
   );
 
   if (resolvedModule !== undefined) {
-    const file = posix(resolvedModule.resolvedFileName);
-    const inside = file.startsWith(`${ctx.root}/`);
-    if (resolvedModule.isExternalLibraryImport || !inside) {
-      return { outcome: "external", name: externalName(specifier) };
-    }
-    const rel = file.slice(ctx.root.length + 1);
-    if (ctx.nodes.has(rel)) return { outcome: "resolved", to: rel };
-    return { outcome: "excluded", reason: excludedReason(rel, ctx) };
+    return fromResolved(
+      posix(resolvedModule.resolvedFileName),
+      resolvedModule.isExternalLibraryImport === true,
+      specifier,
+      ctx,
+    );
   }
 
   // TypeScript found nothing. Relative paths: the file is either a resource
@@ -95,7 +100,68 @@ export function resolveImport(
   if (baseUrl !== undefined && existsLocally(posix(resolve(baseUrl, specifier)))) {
     return { outcome: "unresolved", reason: "introuvable-sous-baseurl" };
   }
-  return { outcome: "external", name: externalName(specifier) };
+  return bareSpecifier(specifier, fromAbs, ctx);
+}
+
+// What a file TypeScript resolved to means for the map.
+function fromResolved(
+  file: string,
+  externalLibrary: boolean,
+  specifier: string,
+  ctx: ResolveContext,
+): Resolution {
+  const inside = file.startsWith(`${ctx.root}/`);
+  if (externalLibrary || !inside) {
+    return { outcome: "external", name: externalName(specifier) };
+  }
+  const rel = file.slice(ctx.root.length + 1);
+  if (ctx.nodes.has(rel)) return { outcome: "resolved", to: rel };
+  return { outcome: "excluded", reason: excludedReason(rel, ctx) };
+}
+
+// A bare name is a package only if something says so: Node knows it, a
+// package.json declares it, or it is not a module name at all (a URL, a
+// `scheme:` virtual module). A name nothing declares is a failure to resolve,
+// not a package: an alias set up in a nested config would otherwise be counted
+// as an external dependency and hide a hole in the graph.
+function bareSpecifier(
+  specifier: string,
+  fromAbs: string,
+  ctx: ResolveContext,
+): Resolution {
+  if (builtinModules.includes(specifier) || /^[a-z][a-z0-9+.-]*:/i.test(specifier)) {
+    return { outcome: "external", name: specifier };
+  }
+  const name = externalName(specifier);
+
+  // A package of this repository. Nothing is installed, so there is no
+  // node_modules link to follow; but the package.json that names it says which
+  // directory it is, and TypeScript can resolve into that directory the way it
+  // would resolve into the installed package (its main, types or index). If
+  // that entry is not there (a build output nobody built), it stays unresolved.
+  const dir = ctx.internal.get(name);
+  if (dir !== undefined) {
+    const { resolvedModule } = tsm.ts.resolveModuleName(
+      specifier,
+      fromAbs,
+      {
+        ...ctx.options,
+        baseUrl: ctx.root,
+        paths: { [name]: [dir], [`${name}/*`]: [`${dir}/*`] },
+      },
+      ctx.host,
+    );
+    if (resolvedModule !== undefined) {
+      return fromResolved(posix(resolvedModule.resolvedFileName), false, specifier, ctx);
+    }
+    return { outcome: "unresolved", reason: "paquet-interne-non-resolu" };
+  }
+
+  const typesName = `@types/${name.startsWith("@") ? name.slice(1).replace("/", "__") : name}`;
+  if (ctx.declared.has(name) || ctx.declared.has(typesName)) {
+    return { outcome: "external", name };
+  }
+  return { outcome: "unresolved", reason: "paquet-non-declare" };
 }
 
 function excludedReason(rel: string, ctx: ResolveContext): ExcludedReason {

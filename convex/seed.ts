@@ -58,6 +58,8 @@ async function seedOrg(
     orgId,
     analysisId,
     path: "src/index.ts",
+    folder: "src",
+    lines: 1,
     contentHash: "seed",
   });
   await ctx.db.insert("edges", {

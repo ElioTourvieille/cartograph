@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { coverageValidator, stageValidator } from "./lib/validators";
 
 // Every table carries the owning organization's id and an index that starts
 // with it. `pnpm check:isolation` fails if one doesn't. Nothing here stores a file's contents: that is fetched from the
@@ -18,7 +19,12 @@ export default defineSchema({
     repoUrl: v.string(),
     owner: v.string(),
     name: v.string(),
-  }).index("by_org", ["orgId"]),
+    // "owner/name", lowercased: GitHub treats case as one repository. The key
+    // that "one analysis per repository" is checked against, in one mutation.
+    repoKey: v.optional(v.string()),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_org_repo_key", ["orgId", "repoKey"]),
 
   analyses: defineTable({
     orgId: v.string(),
@@ -31,14 +37,34 @@ export default defineSchema({
     ),
     // Set only when status is "failed": what went wrong, in words.
     error: v.optional(v.string()),
+    // The stage a run is in, or the one it failed in. Progress reads these and
+    // nothing else, so a run writing files does not re-run the progress query.
+    stage: v.optional(stageValidator),
+    message: v.optional(v.string()),
+    failedStage: v.optional(stageValidator),
+    startedAt: v.optional(v.number()),
+    // Bumped by every write of a run. A run whose updatedAt is old is dead.
+    updatedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    // The commit the archive came from, to tell later whether the repository
+    // has moved on.
+    commitSha: v.optional(v.string()),
+    coverage: v.optional(coverageValidator),
   })
     .index("by_org", ["orgId"])
-    .index("by_org_project", ["orgId", "projectId"]),
+    .index("by_org_project", ["orgId", "projectId"])
+    // Not org-scoped on purpose: the scheduled stale check works across the
+    // deployment. Never reachable from a public function.
+    .index("by_status_updated", ["status", "updatedAt"]),
 
   files: defineTable({
     orgId: v.string(),
     analysisId: v.id("analyses"),
     path: v.string(),
+    // The folder the adapter put the file in, and its length in lines: what the
+    // explorer needs and cannot recompute without the contents.
+    folder: v.string(),
+    lines: v.number(),
     // Lets an explanation say whether the file changed since it was written.
     contentHash: v.string(),
   })
