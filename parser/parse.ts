@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { basename } from "node:path";
 import * as tsm from "ts-morph";
 import { fallbackAdapter, type Adapter } from "./adapter.ts";
 import { extractImports, type RawImport } from "./extract.ts";
@@ -41,11 +41,16 @@ type Parsed = { node: Omit<FileNode, "fanIn" | "fanOut">; imports: RawImport[] }
 export function parseRepository(
   dir: string,
   adapter: Adapter = fallbackAdapter,
+  /** Told when each named stage starts; lets a caller report progress. */
+  onStage?: (stage: "select" | "parse") => void,
 ): ParseResult {
+  onStage?.("select");
   const root = posix(realpathSync(dir));
-  const { project, tsconfig, tsconfigError } = createProject(root);
+  const project = parsingProject();
 
-  const { files: walked, ignoredDirectories } = walk(root);
+  const { files: walked, packageFiles, configFiles, ignoredDirectories } = walk(root);
+  const { declared, internal } = readPackages(root, packageFiles);
+  onStage?.("parse");
   const skipped: SkippedFile[] = [];
   const parsed: Parsed[] = [];
 
@@ -90,14 +95,15 @@ export function parseRepository(
   }
 
   // Resolution needs the full set of nodes, so it runs after every file is read.
-  const options = project.getCompilerOptions();
-  const ctx = {
+  const host = project.getModuleResolutionHost();
+  const configs = new ConfigResolvers(root, configFiles);
+  const shared = {
     root,
     nodes: new Set(parsed.map((p) => p.node.path)),
     skipped: new Map(skipped.map((s) => [s.path, s])),
-    options,
-    host: project.getModuleResolutionHost(),
-    cache: tsm.ts.createModuleResolutionCache(root, (name) => name, options),
+    declared,
+    internal,
+    host,
   };
 
   const total = emptyTally();
@@ -112,6 +118,9 @@ export function parseRepository(
   const edgeKinds = new Map<string, { from: string; to: string; kinds: Set<EdgeKind> }>();
 
   for (const { node, imports } of parsed) {
+    // Each file is resolved with the tsconfig nearest above it: a nested app
+    // keeps its own aliases, which the root's config knows nothing about.
+    const ctx = { ...shared, ...configs.for(node.path) };
     for (const raw of imports) {
       const occurrence: Occurrence = {
         from: node.path,
@@ -175,8 +184,8 @@ export function parseRepository(
     externalPackages: [...external]
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || compare(a.name, b.name)),
-    tsconfig,
-    tsconfigError,
+    tsconfig: configs.used().join(", ") || null,
+    tsconfigError: configs.problems().join(" ; ") || null,
   };
 
   return {
@@ -189,61 +198,140 @@ export function parseRepository(
   };
 }
 
-// Aliases (`paths`) and `extends` live in the repository's own tsconfig, so
-// resolution uses it when it loads. allowJs is forced on: without it
-// TypeScript refuses to resolve .js files at all, which would turn every
-// import of one into a false "not found".
-function createProject(root: string) {
-  const overrides: tsm.CompilerOptions = {
-    allowJs: true,
-    resolveJsonModule: true,
-  };
-  const configPath = join(root, "tsconfig.json");
-  const base = {
-    skipAddingFilesFromTsConfig: true,
-    skipFileDependencyResolution: true,
-  };
+const DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+] as const;
 
-  if (existsSync(configPath)) {
+// What the repository's own package.json files say: the packages it depends on
+// and the names of the packages it contains. A file that is not valid JSON
+// simply declares nothing; the imports that needed it then show as unresolved.
+function readPackages(root: string, paths: readonly string[]) {
+  const declared = new Set<string>();
+  const internal = new Map<string, string>();
+  for (const path of paths) {
+    let json: unknown;
     try {
-      return {
-        project: new tsm.Project({
-          ...base,
-          tsConfigFilePath: configPath,
-          compilerOptions: overrides,
-        }),
-        tsconfig: "tsconfig.json",
-        tsconfigError: null,
-      };
-    } catch (error) {
-      return {
-        project: defaultProject(base, overrides),
-        tsconfig: null,
-        tsconfigError: message(error),
-      };
+      json = JSON.parse(readFileSync(`${root}/${path}`, "utf8"));
+    } catch {
+      continue;
+    }
+    if (typeof json !== "object" || json === null) continue;
+    const pkg = json as Record<string, unknown>;
+    if (typeof pkg.name === "string" && !internal.has(pkg.name)) {
+      internal.set(pkg.name, path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".");
+    }
+    for (const field of DEPENDENCY_FIELDS) {
+      const deps = pkg[field];
+      if (typeof deps === "object" && deps !== null) {
+        for (const name of Object.keys(deps)) declared.add(name);
+      }
     }
   }
-  return {
-    project: defaultProject(base, overrides),
-    tsconfig: null,
-    tsconfigError: null,
-  };
+  // A package that lives here may also be declared by a sibling; it stays
+  // internal, because its code is in the repository and should resolve there.
+  return { declared, internal };
 }
 
-function defaultProject(
-  base: { skipAddingFilesFromTsConfig: boolean; skipFileDependencyResolution: boolean },
-  overrides: tsm.CompilerOptions,
-): tsm.Project {
+// allowJs is forced on: without it TypeScript refuses to resolve .js files at
+// all, which would turn every import of one into a false "not found". JSON
+// resolution is on so a .json import is seen as a file, not as missing.
+const OVERRIDES: tsm.CompilerOptions = { allowJs: true, resolveJsonModule: true };
+
+// What is used when no tsconfig is found above a file, or one will not load.
+const DEFAULT_OPTIONS: tsm.CompilerOptions = {
+  ...OVERRIDES,
+  target: tsm.ts.ScriptTarget.ESNext,
+  module: tsm.ts.ModuleKind.ESNext,
+  moduleResolution: tsm.ts.ModuleResolutionKind.Bundler,
+  jsx: tsm.ts.JsxEmit.Preserve,
+};
+
+// Only reads source files; resolution does not use it.
+function parsingProject(): tsm.Project {
   return new tsm.Project({
-    ...base,
-    compilerOptions: {
-      ...overrides,
-      target: tsm.ts.ScriptTarget.ESNext,
-      module: tsm.ts.ModuleKind.ESNext,
-      moduleResolution: tsm.ts.ModuleResolutionKind.Bundler,
-      jsx: tsm.ts.JsxEmit.Preserve,
-    },
+    skipAddingFilesFromTsConfig: true,
+    skipFileDependencyResolution: true,
+    compilerOptions: DEFAULT_OPTIONS,
   });
+}
+
+// The compiler options for each file: those of the nearest tsconfig.json (or
+// jsconfig.json) in its directory or above, with `extends` followed. Loaded
+// when first needed and kept, along with a resolution cache per config.
+class ConfigResolvers {
+  private readonly known: ReadonlySet<string>;
+  private readonly loaded = new Map<
+    string,
+    { options: tsm.ts.CompilerOptions; cache: tsm.ts.ModuleResolutionCache }
+  >();
+  private readonly errors: string[] = [];
+  // Declared as a field, not as a constructor parameter property: Node runs
+  // this file with types stripped, and that syntax is not erasable.
+  private readonly root: string;
+
+  constructor(root: string, configFiles: readonly string[]) {
+    this.root = root;
+    this.known = new Set(configFiles);
+  }
+
+  /** Configs that were actually used by at least one file. */
+  used(): string[] {
+    return [...this.loaded.keys()].filter((key) => key !== "").sort();
+  }
+
+  /** Configs that could not be read, or whose `extends` could not be found. */
+  problems(): string[] {
+    return this.errors;
+  }
+
+  for(fileRel: string) {
+    const key = this.nearest(fileRel) ?? "";
+    let entry = this.loaded.get(key);
+    if (entry === undefined) {
+      const options = key === "" ? DEFAULT_OPTIONS : this.read(key);
+      entry = {
+        options,
+        cache: tsm.ts.createModuleResolutionCache(this.root, (name) => name, options),
+      };
+      this.loaded.set(key, entry);
+    }
+    return entry;
+  }
+
+  private nearest(fileRel: string): string | null {
+    let dir = fileRel.includes("/") ? fileRel.slice(0, fileRel.lastIndexOf("/")) : ".";
+    for (;;) {
+      for (const name of ["tsconfig.json", "jsconfig.json"]) {
+        const candidate = dir === "." ? name : `${dir}/${name}`;
+        if (this.known.has(candidate)) return candidate;
+      }
+      if (dir === ".") return null;
+      dir = dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".";
+    }
+  }
+
+  // Only what stops a config from being used is reported: a file that will not
+  // parse, or an `extends` that is not there (TS6053). Other diagnostics, such
+  // as an option this TypeScript does not know, do not change how imports resolve.
+  private read(key: string): tsm.ts.CompilerOptions {
+    const abs = `${this.root}/${key}`;
+    const flat = (d: tsm.ts.Diagnostic) =>
+      tsm.ts.flattenDiagnosticMessageText(d.messageText, " ");
+    const file = tsm.ts.readConfigFile(abs, tsm.ts.sys.readFile);
+    if (file.error !== undefined) {
+      this.errors.push(`${key} : ${flat(file.error)}`);
+      return DEFAULT_OPTIONS;
+    }
+    const dir = abs.slice(0, abs.lastIndexOf("/"));
+    const parsed = tsm.ts.parseJsonConfigFileContent(file.config, tsm.ts.sys, dir, OVERRIDES, abs);
+    for (const d of parsed.errors) {
+      if (d.code === 6053) this.errors.push(`${key} : ${flat(d)}`);
+    }
+    return { ...parsed.options, ...OVERRIDES };
+  }
 }
 
 function addToGroup<R extends string>(

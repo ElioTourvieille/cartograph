@@ -1,4 +1,5 @@
 import type { ParseResult } from "../parser/types.ts";
+import type { Graph } from "./types.ts";
 import type { Fold } from "./fold.ts";
 import { KINDS, kindOf, type KindId } from "./kinds.ts";
 
@@ -67,7 +68,7 @@ export function indexEdges(edges: ParseResult["edges"]): Index {
 const byCountThenPath = (a: Ranked, b: Ranked): number =>
   b.count - a.count || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
-export function summarize(data: ParseResult): Summary {
+export function summarize(data: Graph): Summary {
   const leaned = data.files
     .filter((f) => f.fanIn > 0)
     .map((f) => ({ path: f.path, count: f.fanIn }))
@@ -92,7 +93,7 @@ export function summarize(data: ParseResult): Summary {
 }
 
 export function fileDetail(
-  data: ParseResult,
+  data: Graph,
   index: Index,
   path: string,
 ): FileDetail | null {

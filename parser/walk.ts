@@ -43,6 +43,12 @@ export type WalkedFile = {
 
 export type Walk = {
   files: WalkedFile[];
+  /** Every package.json outside the ignored directories: what packages the
+   *  repository declares, so a bare import can be told from an unresolved one. */
+  packageFiles: string[];
+  /** Every tsconfig.json / jsconfig.json outside the ignored directories: a
+   *  file is resolved with the nearest one above it, not only the root's. */
+  configFiles: string[];
   ignoredDirectories: IgnoredDirectory[];
 };
 
@@ -50,6 +56,8 @@ export type Walk = {
 // not followed (loops, and files outside the repository) and are reported.
 export function walk(root: string): Walk {
   const files: WalkedFile[] = [];
+  const packageFiles: string[] = [];
+  const configFiles: string[] = [];
   const ignoredDirectories: IgnoredDirectory[] = [];
 
   const visit = (dir: string, rel: string): void => {
@@ -73,12 +81,19 @@ export function walk(root: string): Walk {
         }
       } else if (entry.isFile() && isSourceFile(entry.name)) {
         files.push({ path: entryRel, isSymlink: false });
+      } else if (entry.isFile() && entry.name === "package.json") {
+        packageFiles.push(entryRel);
+      } else if (
+        entry.isFile() &&
+        (entry.name === "tsconfig.json" || entry.name === "jsconfig.json")
+      ) {
+        configFiles.push(entryRel);
       }
     }
   };
 
   visit(root, "");
-  return { files, ignoredDirectories };
+  return { files, packageFiles, configFiles, ignoredDirectories };
 }
 
 function pointsToDirectory(abs: string): boolean {

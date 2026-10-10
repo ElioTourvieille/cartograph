@@ -16,7 +16,7 @@ import { KINDS } from "@/graph/kinds";
 import { DEFAULT_DEPTH, reach, type Way } from "@/graph/reach";
 import type { Selection } from "@/graph/select";
 import { fallbackAdapter } from "@/parser/adapter";
-import type { ParseResult } from "@/parser/types";
+import type { Graph } from "@/graph/types";
 
 // The right-hand column. It is always there, and it always says something:
 // with nothing selected it is the repository summary, which is its resting
@@ -29,7 +29,7 @@ export type Hover = { path: string | null; node: string | null };
 type Tab = "structure" | "explication";
 
 type Props = {
-  data: ParseResult;
+  data: Graph;
   fold: Fold;
   selection: Selection | null;
   hover: Hover;

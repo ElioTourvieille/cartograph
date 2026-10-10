@@ -32,14 +32,27 @@ const problems = [];
 
 // Node can't import a .ts file on every version we may run on, so transpile the
 // schema next to node_modules (where "convex/server" resolves) and import that.
-const source = readFileSync(join(convexDir, "schema.ts"), "utf8");
-const { outputText } = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-});
 const cacheDir = join(root, "node_modules", ".cache", "cartograph");
 mkdirSync(cacheDir, { recursive: true });
+
+// The schema may import small relative modules (shared validators). Each is
+// transpiled next to it, with its specifier pointed at the .mjs output, so the
+// schema loads exactly as written.
+function emit(sourcePath, outFile) {
+  const { outputText } = ts.transpileModule(readFileSync(sourcePath, "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  });
+  const rewritten = outputText.replace(/from "(\.\.?\/[^"]+)"/g, (_, spec) => {
+    const dependency = join(dirname(sourcePath), spec + ".ts");
+    const out = join(dirname(outFile), spec + ".mjs");
+    mkdirSync(dirname(out), { recursive: true });
+    emit(dependency, out);
+    return `from "${spec}.mjs"`;
+  });
+  writeFileSync(outFile, rewritten);
+}
 const schemaFile = join(cacheDir, "schema.mjs");
-writeFileSync(schemaFile, outputText);
+emit(join(convexDir, "schema.ts"), schemaFile);
 const schema = (await import(pathToFileURL(schemaFile).href)).default;
 const tables = JSON.parse(schema.export()).tables;
 
