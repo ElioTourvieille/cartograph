@@ -163,12 +163,62 @@ export const writeEdges = pipelineMutation({
   },
 });
 
+export const writeRoles = pipelineMutation({
+  args: {
+    message: v.string(),
+    roles: v.array(v.object({ path: v.string(), role: v.string() })),
+  },
+  returns: v.null(),
+  handler: async (ctx, { message, roles }) => {
+    requireRunning(ctx.analysis);
+    if (roles.length > BATCH) throw new ConvexError("Lot de rôles trop grand.");
+    for (const r of roles) {
+      await ctx.db.insertFileRole({
+        analysisId: ctx.analysis._id,
+        filePath: r.path,
+        role: r.role,
+        source: "adapter",
+      });
+    }
+    await ctx.db.patchAnalysis(ctx.analysis._id, { message, updatedAt: Date.now() });
+    return null;
+  },
+});
+
+export const writeRoutes = pipelineMutation({
+  args: {
+    message: v.string(),
+    routes: v.array(
+      v.object({ method: v.string(), pattern: v.string(), file: v.string() }),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, { message, routes }) => {
+    requireRunning(ctx.analysis);
+    if (routes.length > BATCH) throw new ConvexError("Lot de routes trop grand.");
+    for (const r of routes) {
+      await ctx.db.insertRoute({
+        analysisId: ctx.analysis._id,
+        method: r.method,
+        pattern: r.pattern,
+        filePath: r.file,
+      });
+    }
+    await ctx.db.patchAnalysis(ctx.analysis._id, { message, updatedAt: Date.now() });
+    return null;
+  },
+});
+
 // Only this makes an analysis readable: the explorer shows rows of a complete
 // analysis and no other, so a run that stops before here leaves nothing shown.
 export const complete = pipelineMutation({
-  args: { commitSha: v.string(), coverage: coverageValidator },
+  args: {
+    commitSha: v.string(),
+    coverage: coverageValidator,
+    frameworks: v.array(v.string()),
+  },
   returns: v.null(),
-  handler: async (ctx, { commitSha, coverage }) => {
+  handler: async (ctx, { commitSha, coverage, frameworks }) => {
     requireRunning(ctx.analysis);
     const now = Date.now();
     await ctx.db.patchAnalysis(ctx.analysis._id, {
@@ -177,6 +227,7 @@ export const complete = pipelineMutation({
       message: "Terminée.",
       commitSha,
       coverage,
+      frameworks,
       updatedAt: now,
       finishedAt: now,
     });

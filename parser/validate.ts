@@ -198,12 +198,32 @@ export function parseResult(input: unknown): ParseResult {
     fail("$.coverage.files.skipped", "le nombre d'entrées dans skipped");
   }
 
+  const frameworks = arr(o.frameworks, "$.frameworks").map((f, i) => str(f, `$.frameworks[${i}]`));
+  const roles = arr(o.roles, "$.roles").map((item, i) => {
+    const r = rec(item, `$.roles[${i}]`);
+    const path = str(r.path, `$.roles[${i}].path`);
+    if (!known.has(path)) fail(`$.roles[${i}].path`, "un fichier présent dans files");
+    return { path, role: str(r.role, `$.roles[${i}].role`) };
+  });
+  const routes = arr(o.routes, "$.routes").map((item, i) => {
+    const r = rec(item, `$.routes[${i}]`);
+    const file = str(r.file, `$.routes[${i}].file`);
+    if (!known.has(file)) fail(`$.routes[${i}].file`, "un fichier présent dans files");
+    return {
+      method: str(r.method, `$.routes[${i}].method`),
+      pattern: str(r.pattern, `$.routes[${i}].pattern`),
+      file,
+    };
+  });
+
   return {
     schemaVersion: SCHEMA_VERSION,
     root: str(o.root, "$.root"),
-    adapter: str(o.adapter, "$.adapter"),
+    frameworks,
     files,
     edges,
+    roles,
+    routes,
     coverage,
   };
 }

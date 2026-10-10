@@ -10,7 +10,7 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fold as foldFiles, type Fold } from "@/graph/fold";
-import { kindOf, type KindId } from "@/graph/kinds";
+import { categorize, type Categories } from "@/graph/categories";
 import { layout } from "@/graph/layout";
 import { buildScene, type Source } from "@/graph/scene";
 import { highlight, type Direction, type Selection } from "@/graph/select";
@@ -51,11 +51,12 @@ export function Explorer({
   action?: ReactNode;
 }) {
   const fold = useMemo(() => foldFiles(data.files), [data.files]);
+  const categories = useMemo(() => categorize(data), [data]);
   // Held here, above the map and the pane, so both read and write the same
   // selection, the same open folders and the same hover.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [category, setCategory] = useState<KindId | null>(null);
+  const [category, setCategory] = useState<string | null>(null);
   const [hover, setHover] = useState<Hover>({ path: null, node: null });
 
   const onToggle = useCallback(
@@ -99,7 +100,7 @@ export function Explorer({
     // The app bar above is h-9 and <main> pads by 3 (0.75rem): cancel the
     // padding and fill what is left of the viewport.
     <div className="-m-3 flex" style={{ height: "calc(100vh - 2.25rem)" }}>
-      <Rail paths={data.files.map((f) => f.path)} active={category} onPick={setCategory} />
+      <Rail categories={categories} active={category} onPick={setCategory} />
       <div className="flex min-w-0 flex-1 flex-col">
         {coverage !== undefined && <CoverageBanner coverage={coverage} commit={commit} action={action} />}
         <div className="relative min-h-0 flex-1">
@@ -117,6 +118,7 @@ export function Explorer({
                 onHoverPath={onHoverPath}
                 onHoverNode={onHoverNode}
                 category={category}
+                categories={categories}
               />
             </ReactFlowProvider>
           </div>
@@ -124,6 +126,7 @@ export function Explorer({
       </div>
       <DetailPane
         data={data}
+        categories={categories}
         fold={fold}
         selection={selection}
         hover={hover}
@@ -140,7 +143,8 @@ type CanvasProps = {
   expanded: ReadonlySet<string>;
   selection: Selection | null;
   hover: Hover;
-  category: KindId | null;
+  category: string | null;
+  categories: Categories;
   onToggle: (id: string) => void;
   onSelectFile: (path: string) => void;
   onClear: () => void;
@@ -155,6 +159,7 @@ function Canvas({
   selection,
   hover,
   category,
+  categories,
   onToggle,
   onSelectFile,
   onClear,
@@ -171,16 +176,16 @@ function Canvas({
     const counts = new Map<string, number>();
     if (category === null) return counts;
     for (const n of fold.nodes) {
-      counts.set(n.id, n.files.filter((p) => kindOf(p) === category).length);
+      counts.set(n.id, n.files.filter((p) => categories.of(p) === category).length);
     }
     return counts;
-  }, [fold, category]);
+  }, [fold, category, categories]);
 
   const source = useMemo<Source>(
     () => ({ root: data.root, files: data.files, edges: data.edges }),
     [data],
   );
-  const scene = useMemo(() => buildScene(source, fold, expanded), [source, fold, expanded]);
+  const scene = useMemo(() => buildScene(source, fold, expanded, categories.of), [source, fold, expanded, categories]);
   // Positions depend on the structure only, so selecting never moves anything.
   const placed = useMemo(() => layout(scene), [scene]);
   const lit = useMemo(
@@ -213,6 +218,7 @@ function Canvas({
             hoverPath: hover.path,
             hoverNode,
             category,
+            swatchOf: (id: string) => categories.get(id)?.swatch ?? "var(--muted)",
             matches: matches.get(node.id) ?? 0,
             onHoverPath,
             onHoverNode,
@@ -221,7 +227,7 @@ function Canvas({
           },
         };
       }),
-    [scene.nodes, placed, lit, selection, hover.path, hoverNode, category, matches, onHoverPath, onHoverNode, onToggle, onSelectFile],
+    [scene.nodes, placed, lit, selection, hover.path, hoverNode, category, categories, matches, onHoverPath, onHoverNode, onToggle, onSelectFile],
   );
 
   const edges = useMemo<FlowEdge[]>(
@@ -233,7 +239,7 @@ function Canvas({
         const faded =
           category !== null &&
           lit === null &&
-          !e.members.some((i) => kindOf(data.edges[i].from) === category || kindOf(data.edges[i].to) === category);
+          !e.members.some((i) => categories.of(data.edges[i].from) === category || categories.of(data.edges[i].to) === category);
         const look = STROKE[direction ?? "idle"];
         return {
           id: e.id,
@@ -251,7 +257,7 @@ function Canvas({
           markerEnd: { type: MarkerType.ArrowClosed, color: look.arrow, width: 14, height: 14 },
         };
       }),
-    [scene.edges, lit, category, data.edges],
+    [scene.edges, lit, category, categories, data.edges],
   );
 
   // Opening or closing a folder refits the view, and only ever zooms out: the

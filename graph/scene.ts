@@ -1,6 +1,5 @@
 import type { Edge, FileNode } from "../parser/types.ts";
 import type { Fold } from "./fold.ts";
-import { kindOf, type KindId } from "./kinds.ts";
 
 // Everything the canvas draws, derived from the parser's output and the fold.
 // The parser's shape is left alone: nothing here reshapes it, it is read.
@@ -22,7 +21,8 @@ export type SceneRow = {
   path: string;
   /** Shortest tail of the path that is unique among the rows shown. */
   label: string;
-  kind: KindId;
+  /** The id of the category the file is in (its role, or its kind). */
+  category: string;
   fanIn: number;
   fanOut: number;
 };
@@ -122,6 +122,7 @@ export function buildScene(
   source: Source,
   fold: Fold,
   expanded: ReadonlySet<string>,
+  categoryOf: (path: string) => string,
 ): Scene {
   const file = new Map(source.files.map((f) => [f.path, f]));
 
@@ -179,7 +180,7 @@ export function buildScene(
       return {
         path: f.path,
         label: rowLabels[r],
-        kind: kindOf(f.path),
+        category: categoryOf(f.path),
         fanIn: f.fanIn,
         fanOut: f.fanOut,
       };

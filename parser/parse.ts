@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import * as tsm from "ts-morph";
-import { fallbackAdapter, type Adapter } from "./adapter.ts";
-import { extractImports, type RawImport } from "./extract.ts";
+import { fallbackAdapter, folderOf, type ScopedFile } from "./adapter.ts";
+import { ADAPTERS, adapterFor, WATCHED_CALLS } from "./adapters/index.ts";
+import { extractFacts, extractImports, type RawImport } from "./extract.ts";
+import type { FileFacts } from "./facts.ts";
 import { computeFan } from "./metrics.ts";
 import { resolveImport } from "./resolve.ts";
 import {
@@ -13,9 +15,11 @@ import {
   type EdgeKind,
   type ExcludedReason,
   type FileNode,
+  type FileRole,
   type Occurrence,
   type ParseResult,
   type ReasonGroup,
+  type Route,
   type SkippedFile,
   type Tally,
   type UnresolvedReason,
@@ -35,12 +39,15 @@ const emptyTally = (): Tally => ({
   unresolved: 0,
 });
 
-type Parsed = { node: Omit<FileNode, "fanIn" | "fanOut">; imports: RawImport[] };
+type Parsed = {
+  node: Omit<FileNode, "fanIn" | "fanOut">;
+  imports: RawImport[];
+  facts: FileFacts;
+};
 
 // Path in, data out. No network, no framework, nothing started.
 export function parseRepository(
   dir: string,
-  adapter: Adapter = fallbackAdapter,
   /** Told when each named stage starts; lets a caller report progress. */
   onStage?: (stage: "select" | "parse") => void,
 ): ParseResult {
@@ -49,7 +56,7 @@ export function parseRepository(
   const project = parsingProject();
 
   const { files: walked, packageFiles, configFiles, ignoredDirectories } = walk(root);
-  const { declared, internal } = readPackages(root, packageFiles);
+  const { declared, internal, packages } = readPackages(root, packageFiles);
   onStage?.("parse");
   const skipped: SkippedFile[] = [];
   const parsed: Parsed[] = [];
@@ -79,15 +86,17 @@ export function parseRepository(
     try {
       const source = project.createSourceFile(abs, content, { overwrite: true });
       const imports = extractImports(source);
+      const facts = extractFacts(source, WATCHED_CALLS);
       project.removeSourceFile(source);
       parsed.push({
         node: {
           path,
-          folder: adapter.folderOf(path),
+          folder: folderOf(path),
           lines: countLines(content),
           hash: createHash("sha256").update(content).digest("hex"),
         },
         imports,
+        facts,
       });
     } catch (error) {
       skipped.push({ path, reason: "analyse-impossible", detail: message(error) });
@@ -169,6 +178,48 @@ export function parseRepository(
     .map(({ node }) => ({ ...node, ...fan.get(node.path)! }))
     .sort((a, b) => compare(a.path, b.path));
 
+  // Each package is read with the adapter its own dependencies select, so a
+  // repository holding a Next.js app and a NestJS service is read as both.
+  const byPackage = new Map<string, ScopedFile[]>();
+  const adapterOf = new Map<string, ReturnType<typeof adapterFor>>();
+  for (const { node, facts } of parsed) {
+    const scope = scopeOf(node.path, packages);
+    const key = scope?.dir ?? "";
+    if (!adapterOf.has(key)) {
+      adapterOf.set(key, scope === undefined ? fallbackAdapter : adapterFor(scope.dependencies));
+    }
+    const local =
+      scope === undefined || scope.dir === "." ? node.path : node.path.slice(scope.dir.length + 1);
+    const list = byPackage.get(key) ?? [];
+    list.push({ path: node.path, local, facts });
+    byPackage.set(key, list);
+  }
+  const roles: FileRole[] = [];
+  const routes: Route[] = [];
+  const used = new Set<string>();
+  const context = {
+    read: (path: string): string | null => {
+      try {
+        return readFileSync(`${root}/${path}`, "utf8");
+      } catch {
+        return null;
+      }
+    },
+  };
+  for (const [key, scoped] of byPackage) {
+    const adapter = adapterOf.get(key) ?? fallbackAdapter;
+    if (adapter !== fallbackAdapter) used.add(adapter.id);
+    for (const file of scoped) {
+      const role = adapter.roleOf(file);
+      if (role !== null) roles.push({ path: file.path, role });
+    }
+    routes.push(...adapter.routes(scoped, context));
+  }
+  roles.sort((a, b) => compare(a.path, b.path));
+  routes.sort(
+    (a, b) => compare(a.pattern, b.pattern) || compare(a.method, b.method) || compare(a.file, b.file),
+  );
+
   const coverage: Coverage = {
     files: {
       found: walked.length,
@@ -191,9 +242,11 @@ export function parseRepository(
   return {
     schemaVersion: SCHEMA_VERSION,
     root: basename(root),
-    adapter: adapter.name,
+    frameworks: ADAPTERS.map((a) => a.id).filter((id) => used.has(id)),
     files,
     edges,
+    roles,
+    routes,
     coverage,
   };
 }
@@ -208,7 +261,10 @@ const DEPENDENCY_FIELDS = [
 // What the repository's own package.json files say: the packages it depends on
 // and the names of the packages it contains. A file that is not valid JSON
 // simply declares nothing; the imports that needed it then show as unresolved.
+type PackageScope = { dir: string; dependencies: ReadonlySet<string> };
+
 function readPackages(root: string, paths: readonly string[]) {
+  const packages: PackageScope[] = [];
   const declared = new Set<string>();
   const internal = new Map<string, string>();
   for (const path of paths) {
@@ -223,16 +279,26 @@ function readPackages(root: string, paths: readonly string[]) {
     if (typeof pkg.name === "string" && !internal.has(pkg.name)) {
       internal.set(pkg.name, path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".");
     }
+    const own = new Set<string>();
     for (const field of DEPENDENCY_FIELDS) {
       const deps = pkg[field];
       if (typeof deps === "object" && deps !== null) {
-        for (const name of Object.keys(deps)) declared.add(name);
+        for (const name of Object.keys(deps)) {
+          declared.add(name);
+          own.add(name);
+        }
       }
     }
+    packages.push({
+      dir: path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".",
+      dependencies: own,
+    });
   }
   // A package that lives here may also be declared by a sibling; it stays
   // internal, because its code is in the repository and should resolve there.
-  return { declared, internal };
+  // Deepest first, so the nearest package above a file is the first that matches.
+  packages.sort((a, b) => b.dir.length - a.dir.length);
+  return { declared, internal, packages };
 }
 
 // allowJs is forced on: without it TypeScript refuses to resolve .js files at
@@ -332,6 +398,11 @@ class ConfigResolvers {
     }
     return { ...parsed.options, ...OVERRIDES };
   }
+}
+
+// The package a file belongs to: the nearest package.json above it.
+function scopeOf(path: string, packages: readonly PackageScope[]): PackageScope | undefined {
+  return packages.find((p) => p.dir === "." || path.startsWith(`${p.dir}/`));
 }
 
 function addToGroup<R extends string>(

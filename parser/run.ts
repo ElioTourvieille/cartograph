@@ -16,7 +16,7 @@ if (dir === undefined || out === undefined) {
 }
 
 try {
-  const result = parseRepository(resolve(dir), undefined, (stage) =>
+  const result = parseRepository(resolve(dir), (stage) =>
     console.log(JSON.stringify({ stage })),
   );
   writeFileSync(resolve(out), JSON.stringify(result));

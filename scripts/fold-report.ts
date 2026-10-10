@@ -4,6 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { categorize } from "../graph/categories.ts";
 import { fold, MAX_NODES } from "../graph/fold.ts";
 import {
   buildScene,
@@ -22,6 +23,7 @@ if (arg === undefined) {
 const file = resolve(arg);
 const data = parseResult(JSON.parse(readFileSync(file, "utf8")));
 const f = fold(data.files);
+const categories = categorize(data);
 const source = { root: data.root, files: data.files, edges: data.edges };
 
 const sizes = f.nodes.map((n) => n.files.length);
@@ -66,8 +68,8 @@ const check = (label: string, scene: Scene): void => {
 const unmapped = data.edges.filter((e) => !f.nodeOf.has(e.from) || !f.nodeOf.has(e.to)).length;
 console.log(`   liens du parseur hors de tout nœud : ${unmapped}`);
 if (unmapped > 0) problems.push("liens du parseur hors de tout nœud");
-check("tout fermé", buildScene(source, f, new Set()));
-check("tout ouvert", buildScene(source, f, new Set(f.nodes.map((n) => n.id))));
+check("tout fermé", buildScene(source, f, new Set(), categories.of));
+check("tout ouvert", buildScene(source, f, new Set(f.nodes.map((n) => n.id)), categories.of));
 
 if (problems.length > 0) {
   console.error(`\nÉCHEC : ${problems.join(" ; ")}`);

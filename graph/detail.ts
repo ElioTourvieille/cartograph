@@ -1,7 +1,8 @@
 import type { ParseResult } from "../parser/types.ts";
 import type { Graph } from "./types.ts";
 import type { Fold } from "./fold.ts";
-import { KINDS, kindOf, type KindId } from "./kinds.ts";
+import type { Categories } from "./categories.ts";
+import { FRAMEWORKS } from "./taxonomy.ts";
 
 // What the detail pane shows, derived from the parser's output and the fold.
 // Pure functions over the file list and the edge list: nothing here reads a
@@ -14,11 +15,11 @@ export type Ranked = { path: string; count: number };
 
 export type Summary = {
   name: string;
-  /** The adapter that handled the repository; "aucun" is the fallback. */
-  framework: string;
+  /** Names of the frameworks found, in detection order; empty when none. */
+  frameworks: string[];
   files: number;
   imports: number;
-  /** null until an adapter can recover routes exactly: absent, not zero. */
+  /** null when no framework was found: absent, not zero. */
   routes: number | null;
   /** Most depended-on first, shown up to LIST_LIMIT. */
   leaned: Ranked[];
@@ -27,11 +28,12 @@ export type Summary = {
   unimportedTotal: number;
   /** Files no framework convention gave a role to. */
   unidentified: number;
+  /** The routes whose method and full pattern are written in the code. */
+  routeList: Graph["routes"];
 };
 
 export type FileDetail = {
   path: string;
-  kind: KindId;
   lines: number;
   imports: string[];
   dependents: string[];
@@ -40,7 +42,8 @@ export type FileDetail = {
 export type NodeDetail = {
   id: string;
   files: number;
-  kinds: { id: KindId; label: string; count: number }[];
+  /** What kind of file is inside, in rail order, with how many of each. */
+  categories: { id: string; label: string; swatch: string; count: number }[];
 };
 
 export type Index = {
@@ -80,15 +83,18 @@ export function summarize(data: Graph): Summary {
 
   return {
     name: data.root,
-    framework: data.adapter,
+    frameworks: data.frameworks.map((id) => FRAMEWORKS[id]?.label ?? id),
     files: data.files.length,
     imports: data.edges.length,
-    routes: null,
+    routes: data.frameworks.length === 0 ? null : data.routes.length,
     leaned: leaned.slice(0, LIST_LIMIT),
     unimported: unimported.slice(0, LIST_LIMIT),
     unimportedTotal: unimported.length,
-    // Only the fallback adapter exists, and it gives no file a role.
-    unidentified: data.files.length,
+    // With no framework found nothing could be identified; with one, what is
+    // left is every file that has no role.
+    unidentified:
+      data.frameworks.length === 0 ? data.files.length : data.files.length - data.roles.length,
+    routeList: data.routes,
   };
 }
 
@@ -101,28 +107,29 @@ export function fileDetail(
   if (file === undefined) return null;
   return {
     path,
-    kind: kindOf(path),
     lines: file.lines,
     imports: index.imports.get(path) ?? [],
     dependents: index.dependents.get(path) ?? [],
   };
 }
 
-export function nodeDetail(fold: Fold, id: string): NodeDetail | null {
+export function nodeDetail(
+  fold: Fold,
+  id: string,
+  categories: Categories,
+): NodeDetail | null {
   const node = fold.nodes.find((n) => n.id === id);
   if (node === undefined) return null;
-  const counts = new Map<KindId, number>();
+  const counts = new Map<string, number>();
   for (const path of node.files) {
-    const kind = kindOf(path);
-    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    const category = categories.of(path);
+    counts.set(category, (counts.get(category) ?? 0) + 1);
   }
   return {
     id,
     files: node.files.length,
-    kinds: KINDS.filter((k) => counts.has(k.id)).map((k) => ({
-      id: k.id,
-      label: k.label,
-      count: counts.get(k.id) ?? 0,
-    })),
+    categories: categories.list
+      .filter((c) => counts.has(c.id))
+      .map((c) => ({ id: c.id, label: c.label, swatch: c.swatch, count: counts.get(c.id) ?? 0 })),
   };
 }

@@ -167,6 +167,8 @@ export type OrgWriteDb = OrgDb & {
   insertAnalysis(doc: Insertable<"analyses">): Promise<Id<"analyses">>;
   insertFile(doc: Insertable<"files">): Promise<Id<"files">>;
   insertEdge(doc: Insertable<"edges">): Promise<Id<"edges">>;
+  insertFileRole(doc: Insertable<"fileRoles">): Promise<Id<"fileRoles">>;
+  insertRoute(doc: Insertable<"routes">): Promise<Id<"routes">>;
   patchAnalysis(
     id: Id<"analyses">,
     fields: Partial<Insertable<"analyses">>,
@@ -189,6 +191,8 @@ function orgWriteDb(db: DatabaseWriter, orgId: string): OrgWriteDb {
     insertAnalysis: (doc) => db.insert("analyses", { ...doc, orgId }),
     insertFile: (doc) => db.insert("files", { ...doc, orgId }),
     insertEdge: (doc) => db.insert("edges", { ...doc, orgId }),
+    insertFileRole: (doc) => db.insert("fileRoles", { ...doc, orgId }),
+    insertRoute: (doc) => db.insert("routes", { ...doc, orgId }),
     async patchAnalysis(id, fields) {
       await owned("analyses", id);
       await db.patch("analyses", id, fields);

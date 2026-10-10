@@ -115,14 +115,30 @@ export async function runPipeline(analysisId: Id<"analyses">): Promise<void> {
       });
     }
 
+    for (let i = 0; i < result.roles.length; i += BATCH) {
+      await convex.mutation(api.pipeline.writeRoles, {
+        ...base,
+        message: `Écriture des rôles : ${Math.min(i + BATCH, result.roles.length)} sur ${result.roles.length}.`,
+        roles: result.roles.slice(i, i + BATCH),
+      });
+    }
+    for (let i = 0; i < result.routes.length; i += BATCH) {
+      await convex.mutation(api.pipeline.writeRoutes, {
+        ...base,
+        message: `Écriture des routes : ${Math.min(i + BATCH, result.routes.length)} sur ${result.routes.length}.`,
+        routes: result.routes.slice(i, i + BATCH),
+      });
+    }
+
     await convex.mutation(api.pipeline.complete, {
       ...base,
       commitSha: sha,
       coverage: coverageOf(result, notExtracted),
+      frameworks: result.frameworks,
     });
     lap("store");
     console.log(
-      `[pipeline] ${analysisId} terminé : ${result.files.length} fichiers, ${edges.length} liens, lots de ${BATCH}, ` +
+      `[pipeline] ${analysisId} terminé : ${result.files.length} fichiers, ${edges.length} liens, ${result.roles.length} rôles, ${result.routes.length} routes, lots de ${BATCH}, ` +
         Object.entries(timings)
           .map(([k, s]) => `${k} ${s.toFixed(1)} s`)
           .join(", "),
