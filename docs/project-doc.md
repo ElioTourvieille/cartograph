@@ -83,8 +83,11 @@ tool drifts toward becoming a code reviewer. Both are refused.
 
 ## Scope
 
-- Sign-in with GitHub, Google or email, for identity only. No repo scope, no
-  token storage, public repositories only.
+- Sign-in with GitHub, Google or email, for identity only. Sign-in never asks
+  for a repo scope and never stores a GitHub token.
+- Public repositories by URL, from the first phases. Private repositories come
+  later, through a GitHub App an organization installs itself (phase 14). Still
+  no user token stored, anywhere.
 - Organizations. Every analysis belongs to one, people are invited into one, and
   what you can see follows from which one you're in. Default roles only.
 - Parsing every file — imports, re-exports and dynamic imports become edges.
@@ -116,8 +119,11 @@ like an improvement. The reason matters more than the refusal.
 - **Letting the agent traverse the graph itself.** It picks a starting point and
   a direction; the same arithmetic that draws the canvas does the walk. If the
   model does the walking, invented structure comes straight back in.
-- **Private repositories.** Requires a token that would then have to be stored.
-  Not in v1.
+- **Private repositories before phase 14, and any way of reaching them that
+  stores a user's token.** A user OAuth grant or a personal access token would
+  mean holding a credential that can read everything that person can. Private
+  access, when it arrives, is a GitHub App the organization installs on chosen
+  repositories, read-only, with tokens minted for one run and thrown away.
 - **Approximate routes.** If a route's method and full path can't both be
   recovered from the syntax, show nothing. A wrong route is the same failure as
   an invented edge.
@@ -235,6 +241,15 @@ judging them fine is not measurement. The requirement is that answer quality
 becomes a number; the method for producing that number is genuinely open at the
 time of writing, and it is the least settled part of this plan.
 
+**Private client code.** Once private repositories are in, this app handles
+code that isn't ours. Three places it can leak: the model provider, the trace
+store, and the database. The graph stored in Convex is paths and edges only,
+never file contents. Explanations send file contents to the model, so that is a
+contractual question to settle per client before their repository is analysed,
+not a switch to flip afterwards. Traces must not carry that content for private
+repositories. None of this is a reason to leave private repositories out; it is
+the reason phase 14 spends as long on this as on the GitHub plumbing.
+
 **Convex's read and write limits.** A single query or mutation can only touch so
 many documents and so many bytes. A repository with four thousand files and ten
 thousand edges is over what a naive one-document-per-row read or write can do in
@@ -254,6 +269,11 @@ Not "it looks right". Specifics:
 - Every table carries an organization and an index on it, and no public
   function is built from a raw builder. Both are checked by a script, not by
   reading.
+- A private repository is only reachable through an installation that belongs
+  to the signed-in organization. Another organization naming that installation,
+  directly or through a crafted request, gets nothing.
+- No file contents are stored in Convex or sent to the trace store for a
+  private repository, and the clone is gone from disk when the run ends.
 - An explanation never names a file absent from the repository, and that is
   demonstrated by a check rather than asserted.
 - The chat panel shows what it looked up before it answers. An answer arriving
