@@ -36,9 +36,9 @@ if (outPath !== null) {
   console.log(`\nÉcrit dans ${file}, relu et validé.`);
 }
 
-function print({ coverage: c, files, edges, root, adapter }: ParseResult): void {
+function print({ coverage: c, files, edges, root, frameworks, roles, routes }: ParseResult): void {
   const folders = new Set(files.map((f) => f.folder));
-  console.log(`Dépôt : ${root} (adaptateur : ${adapter})`);
+  console.log(`Dépôt : ${root} (frameworks : ${frameworks.join(", ") || "aucun"})`);
   console.log(
     `tsconfig : ${c.tsconfig ?? "aucun"}${c.tsconfigError === null ? "" : ` (échec : ${c.tsconfigError})`}`,
   );
@@ -54,6 +54,15 @@ function print({ coverage: c, files, edges, root, adapter }: ParseResult): void 
   }
   console.log(`Dossiers distincts : ${folders.size}`);
   console.log(`Liens : ${edges.length} (sans doublons)`);
+
+  const perRole = new Map<string, number>();
+  for (const r of roles) perRole.set(r.role, (perRole.get(r.role) ?? 0) + 1);
+  console.log(
+    `Rôles : ${roles.length} fichiers sur ${files.length} — ` +
+      ([...perRole].map(([role, n]) => `${role} ${n}`).join(", ") || "(aucun)"),
+  );
+  console.log(`Routes : ${routes.length}`);
+  for (const r of routes) console.log(`  ${r.method.padEnd(7)} ${r.pattern}   ${r.file}`);
 
   console.log("\nImports vus, par issue :");
   console.log(`  ${row("tous", c.imports)}`);

@@ -1,7 +1,6 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { KindId } from "@/graph/kinds";
 import type { SceneNode } from "@/graph/scene";
 import { HEADER, MORE_HANDLE, NODE_HANDLE, ROW, rowHandle } from "@/graph/scene";
 
@@ -22,7 +21,9 @@ export type FolderData = {
   /** A path the pointer is over, here or in the detail pane. */
   hoverPath: string | null;
   /** The category picked in the rail, or null. Dims what is not in it. */
-  category: KindId | null;
+  category: string | null;
+  /** The swatch colour of a category id. */
+  swatchOf: (category: string) => string;
   /** How many of this node's files are in that category (every file, not just the rows shown). */
   matches: number;
   /** The node that path (or the hovered node) belongs to. */
@@ -56,7 +57,7 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
     data.category === null ? null : (
       <span
         className="absolute right-1.5 top-1 font-mono text-[10px] font-semibold"
-        style={{ color: `var(--kind-${data.category})` }}
+        style={{ color: data.swatchOf(data.category) }}
         title={`${data.matches} fichiers de cette catégorie`}
       >
         {data.matches}
@@ -125,12 +126,12 @@ export function FolderNode({ data }: NodeProps<FolderFlowNode>) {
             className={`flex w-full cursor-pointer items-center gap-1.5 px-2 text-left ${picked ? "bg-accent/15" : hot ? "bg-foreground/10" : ""}`}
             style={{
               height: ROW,
-              opacity: lit && (data.category === null || row.kind === data.category) ? 1 : 0.25,
+              opacity: lit && (data.category === null || row.category === data.category) ? 1 : 0.25,
             }}
           >
             <span
               className="size-1.5 shrink-0 rounded-full"
-              style={{ background: `var(--kind-${row.kind})` }}
+              style={{ background: data.swatchOf(row.category) }}
             />
             <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{row.label}</span>
             <span className="shrink-0 text-[10px] text-muted">{row.fanIn}</span>

@@ -10,12 +10,11 @@ import {
   type Index,
   type Ranked,
 } from "@/graph/detail";
+import type { Categories, Category } from "@/graph/categories";
 import type { Fold } from "@/graph/fold";
 import { insights, SENTENCE, type Insights } from "@/graph/insights";
-import { KINDS } from "@/graph/kinds";
 import { DEFAULT_DEPTH, reach, type Way } from "@/graph/reach";
 import type { Selection } from "@/graph/select";
-import { fallbackAdapter } from "@/parser/adapter";
 import type { Graph } from "@/graph/types";
 
 // The right-hand column. It is always there, and it always says something:
@@ -30,6 +29,7 @@ type Tab = "structure" | "explication";
 
 type Props = {
   data: Graph;
+  categories: Categories;
   fold: Fold;
   selection: Selection | null;
   hover: Hover;
@@ -37,15 +37,23 @@ type Props = {
   onHover: (path: string | null) => void;
 };
 
-export function DetailPane({ data, fold, selection, hover, onSelectFile, onHover }: Props) {
+export function DetailPane({
+  data,
+  categories,
+  fold,
+  selection,
+  hover,
+  onSelectFile,
+  onHover,
+}: Props) {
   // Kept here, not reset when the selection changes: someone comparing
   // explanations across files should not reopen the tab each time.
   const [tab, setTab] = useState<Tab>("structure");
   const index = useMemo(() => indexEdges(data.edges), [data.edges]);
   const summary = useMemo(() => summarize(data), [data]);
   const found = useMemo(
-    () => insights(data, fallbackAdapter.reachedByFramework),
-    [data],
+    () => insights(data, categories.reached),
+    [data, categories],
   );
 
   const hot = (path: string): boolean =>
@@ -80,10 +88,11 @@ export function DetailPane({ data, fold, selection, hover, onSelectFile, onHover
                 key={selection.path}
                 detail={fileDetail(data, index, selection.path)}
                 index={index}
+                category={categories.get(categories.of(selection.path))}
                 {...link}
               />
             ) : (
-              <NodeView detail={nodeDetail(fold, selection.id)} />
+              <NodeView detail={nodeDetail(fold, selection.id, categories)} />
             )}
           </div>
         </>
@@ -133,7 +142,10 @@ function Summary({
       <div>
         <h2 className="break-all font-mono text-xs font-semibold">{summary.name}</h2>
         <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-          <Fact label="Framework" value={summary.framework} />
+          <Fact
+            label="Framework"
+            value={summary.frameworks.length === 0 ? "aucun" : summary.frameworks.join(", ")}
+          />
           <Fact label="Fichiers" value={String(summary.files)} />
           <Fact label="Imports" value={String(summary.imports)} />
           <Fact label="Routes" value={summary.routes === null ? "—" : String(summary.routes)} />
@@ -155,6 +167,8 @@ function Summary({
           </p>
         )}
       </Section>
+
+      <RoutesTable routes={summary.routeList} {...link} />
 
       <p className="text-xs text-muted">
         {summary.unidentified} fichiers qu&apos;aucune convention n&apos;a identifiés.
@@ -307,10 +321,14 @@ function PathButton({
 function FileView({
   detail,
   index,
+  category,
   ...link
-}: { detail: ReturnType<typeof fileDetail>; index: Index } & LinkProps) {
+}: {
+  detail: ReturnType<typeof fileDetail>;
+  index: Index;
+  category: Category | undefined;
+} & LinkProps) {
   if (detail === null) return null;
-  const kind = KINDS.find((k) => k.id === detail.kind)?.label ?? detail.kind;
   return (
     <div className="flex flex-col gap-3">
       <div>
@@ -320,9 +338,9 @@ function FileView({
           <dd className="flex items-center gap-1.5">
             <span
               className="size-1.5 shrink-0 rounded-full"
-              style={{ background: `var(--kind-${detail.kind})` }}
+              style={{ background: category?.swatch ?? "var(--muted)" }}
             />
-            {kind}
+            {category?.label ?? "—"}
           </dd>
           <Fact label="Longueur" value={`${detail.lines} lignes`} />
           <Fact label="Importe" value={String(detail.imports.length)} />
@@ -367,11 +385,11 @@ function NodeView({ detail }: { detail: ReturnType<typeof nodeDetail> }) {
       </div>
       <Section title="Types de fichiers">
         <ul className="flex flex-col gap-0.5 text-xs">
-          {detail.kinds.map((k) => (
+          {detail.categories.map((k) => (
             <li key={k.id} className="flex items-center gap-2">
               <span
                 className="size-1.5 shrink-0 rounded-full"
-                style={{ background: `var(--kind-${k.id})` }}
+                style={{ background: k.swatch }}
               />
               <span className="min-w-0 flex-1 truncate">{k.label}</span>
               <span className="font-mono text-muted">{k.count}</span>
@@ -503,5 +521,39 @@ function StepButton({
     >
       {children}
     </button>
+  );
+}
+
+// The routes the adapters recovered, each with the file that declares it. Only
+// routes whose method and full pattern are written in the code are here: a
+// repository can have more routes than this table shows, never fewer lines
+// than it is sure of.
+function RoutesTable({ routes, ...link }: { routes: Graph["routes"] } & LinkProps) {
+  if (routes.length === 0) return null;
+  return (
+    <Section title={`Routes (${routes.length})`}>
+      <ul className="flex max-h-72 flex-col overflow-y-auto">
+        {routes.map((route) => (
+          <li key={`${route.method} ${route.pattern} ${route.file}`}>
+            <button
+              type="button"
+              title={route.file}
+              onClick={() => link.onSelectFile(route.file)}
+              onMouseEnter={() => link.onHover(route.file)}
+              onMouseLeave={() => link.onHover(null)}
+              className={`flex w-full cursor-pointer flex-col rounded-sm px-1 py-0.5 text-left ${link.hot(route.file) ? "bg-foreground/10" : "hover:bg-foreground/5"}`}
+            >
+              <span className="flex gap-2 font-mono text-[11px] leading-tight">
+                <span className="w-12 shrink-0 font-semibold">{route.method}</span>
+                <span className="min-w-0 flex-1 break-all">{route.pattern}</span>
+              </span>
+              <span className="break-all pl-14 font-mono text-[10px] leading-tight text-muted">
+                {route.file}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }

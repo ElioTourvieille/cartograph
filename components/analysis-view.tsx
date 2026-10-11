@@ -11,7 +11,6 @@ import { STAGE_LABEL, STAGE_ORDER } from "@/components/stages";
 import type { StoredCoverage } from "@/graph/coverage";
 import { computeFan } from "@/parser/metrics";
 import type { Graph } from "@/graph/types";
-import { fallbackAdapter } from "@/parser/adapter";
 import type { EdgeKind } from "@/parser/types";
 
 const DATE = new Intl.DateTimeFormat("fr-CH", { dateStyle: "short", timeStyle: "medium" });
@@ -31,6 +30,7 @@ export function AnalysisView({ id }: { id: string }) {
       <Loaded
         id={id}
         analysisId={progress.id}
+        frameworks={progress.frameworks}
         repo={progress.repo}
         commit={progress.commitSha}
         coverage={progress.coverage}
@@ -117,18 +117,22 @@ function Rerun({ id, confirm = false }: { id: Id<"analyses">; confirm?: boolean 
 function Loaded({
   id,
   analysisId,
+  frameworks,
   repo,
   commit,
   coverage,
 }: {
   id: string;
   analysisId: Id<"analyses">;
+  frameworks: string[];
   repo: string | null;
   commit: string | null;
   coverage: StoredCoverage | null;
 }) {
   const files = usePaginatedQuery(api.graph.files, { analysisId: id }, { initialNumItems: READ_PAGE });
   const edges = usePaginatedQuery(api.graph.edges, { analysisId: id }, { initialNumItems: READ_PAGE });
+  const roles = usePaginatedQuery(api.graph.roles, { analysisId: id }, { initialNumItems: READ_PAGE });
+  const routes = usePaginatedQuery(api.graph.routes, { analysisId: id }, { initialNumItems: READ_PAGE });
 
   useEffect(() => {
     if (files.status === "CanLoadMore") files.loadMore(READ_PAGE);
@@ -136,8 +140,18 @@ function Loaded({
   useEffect(() => {
     if (edges.status === "CanLoadMore") edges.loadMore(READ_PAGE);
   }, [edges]);
+  useEffect(() => {
+    if (roles.status === "CanLoadMore") roles.loadMore(READ_PAGE);
+  }, [roles]);
+  useEffect(() => {
+    if (routes.status === "CanLoadMore") routes.loadMore(READ_PAGE);
+  }, [routes]);
 
-  const ready = files.status === "Exhausted" && edges.status === "Exhausted";
+  const ready =
+    files.status === "Exhausted" &&
+    edges.status === "Exhausted" &&
+    roles.status === "Exhausted" &&
+    routes.status === "Exhausted";
   const graph = useMemo<Graph | null>(() => {
     if (!ready) return null;
     // Rows hold one edge per kind; the explorer wants one per pair.
@@ -160,7 +174,9 @@ function Loaded({
     );
     return {
       root: repo?.split("/").pop() ?? "dépôt",
-      adapter: fallbackAdapter.name,
+      frameworks,
+      roles: roles.results,
+      routes: routes.results,
       files: files.results.map((f) => ({
         path: f.path,
         folder: f.folder,
@@ -171,7 +187,7 @@ function Loaded({
       })),
       edges: pairs,
     };
-  }, [ready, files.results, edges.results, repo]);
+  }, [ready, files.results, edges.results, roles.results, routes.results, frameworks, repo]);
 
   if (graph === null) {
     return (

@@ -1,24 +1,19 @@
-import { KINDS, kindOf, type KindId } from "@/graph/kinds";
+import type { Categories } from "@/graph/categories";
 
 // The left rail: categories of file, each with its swatch, its name and how
-// many files it holds. Picking one dims everything not in it on the map; it
-// never removes anything, so the shape of the whole stays. Picking it again
-// clears it. Categories with no file are not listed.
+// many files it holds, in the taxonomy's fixed order. Picking one dims
+// everything not in it on the map; it never removes anything, so the shape of
+// the whole stays. Picking it again clears it. Categories with no file are not
+// listed.
 export function Rail({
-  paths,
+  categories,
   active,
   onPick,
 }: {
-  paths: readonly string[];
-  active: KindId | null;
-  onPick: (kind: KindId | null) => void;
+  categories: Categories;
+  active: string | null;
+  onPick: (category: string | null) => void;
 }) {
-  const counts = new Map<string, number>();
-  for (const path of paths) {
-    const kind = kindOf(path);
-    counts.set(kind, (counts.get(kind) ?? 0) + 1);
-  }
-
   return (
     <aside
       aria-label="Catégories"
@@ -26,23 +21,25 @@ export function Rail({
     >
       <h2 className="mb-1.5 text-[10px] font-semibold uppercase text-muted">Catégories</h2>
       <ul className="flex flex-col gap-0.5">
-        {KINDS.filter((k) => counts.has(k.id)).map((k) => (
-          <li key={k.id}>
-            <button
-              type="button"
-              aria-pressed={active === k.id}
-              onClick={() => onPick(active === k.id ? null : k.id)}
-              className={`flex w-full cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 text-left text-xs ${active === k.id ? "bg-foreground/10 font-semibold" : "hover:bg-foreground/5"}`}
-            >
-              <span
-                className="size-2 shrink-0 rounded-sm"
-                style={{ background: `var(--kind-${k.id})` }}
-              />
-              <span className="min-w-0 flex-1 truncate">{k.label}</span>
-              <span className="font-mono text-muted">{counts.get(k.id)}</span>
-            </button>
-          </li>
-        ))}
+        {categories.list
+          .filter((c) => categories.counts.has(c.id))
+          .map((c) => (
+            <li key={c.id}>
+              <button
+                type="button"
+                aria-pressed={active === c.id}
+                onClick={() => onPick(active === c.id ? null : c.id)}
+                className={`flex w-full cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 text-left text-xs ${active === c.id ? "bg-foreground/10 font-semibold" : "hover:bg-foreground/5"}`}
+              >
+                <span
+                  className="size-2 shrink-0 rounded-sm"
+                  style={{ background: c.swatch }}
+                />
+                <span className="min-w-0 flex-1 truncate">{c.label}</span>
+                <span className="font-mono text-muted">{categories.counts.get(c.id)}</span>
+              </button>
+            </li>
+          ))}
       </ul>
     </aside>
   );

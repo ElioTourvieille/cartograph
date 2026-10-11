@@ -78,3 +78,45 @@ export const edges = orgQuery({
     };
   },
 });
+
+export const roles = orgQuery({
+  args: { analysisId: v.string(), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(v.object({ path: v.string(), role: v.string() })),
+  handler: async (ctx, { analysisId, paginationOpts }) => {
+    const id = ctx.db.normalizeId("analyses", analysisId);
+    if (id === null) return empty;
+    const analysis = await ctx.db.get("analyses", id);
+    if (analysis === null || analysis.status !== "complete") return empty;
+
+    const result = await ctx.db
+      .inAnalysis(id)
+      .fileRoles()
+      .paginate({ ...paginationOpts, numItems: Math.min(paginationOpts.numItems, READ_PAGE) });
+    return {
+      ...result,
+      page: result.page.map((r) => ({ path: r.filePath, role: r.role })),
+    };
+  },
+});
+
+export const routes = orgQuery({
+  args: { analysisId: v.string(), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(
+    v.object({ method: v.string(), pattern: v.string(), file: v.string() }),
+  ),
+  handler: async (ctx, { analysisId, paginationOpts }) => {
+    const id = ctx.db.normalizeId("analyses", analysisId);
+    if (id === null) return empty;
+    const analysis = await ctx.db.get("analyses", id);
+    if (analysis === null || analysis.status !== "complete") return empty;
+
+    const result = await ctx.db
+      .inAnalysis(id)
+      .routes()
+      .paginate({ ...paginationOpts, numItems: Math.min(paginationOpts.numItems, READ_PAGE) });
+    return {
+      ...result,
+      page: result.page.map((r) => ({ method: r.method, pattern: r.pattern, file: r.filePath })),
+    };
+  },
+});

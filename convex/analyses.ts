@@ -117,6 +117,7 @@ export const requestRerun = orgMutation({
       failedStage: undefined,
       commitSha: undefined,
       coverage: undefined,
+      frameworks: undefined,
       startedAt: now,
       updatedAt: now,
       finishedAt: undefined,
@@ -147,6 +148,7 @@ export const progress = orgQuery({
       repoUrl: v.union(v.string(), v.null()),
       commitSha: v.union(v.string(), v.null()),
       coverage: v.union(coverageValidator, v.null()),
+      frameworks: v.array(v.string()),
     }),
   ),
   handler: async (ctx, { analysisId }) => {
@@ -169,6 +171,7 @@ export const progress = orgQuery({
       repoUrl: project?.repoUrl ?? null,
       commitSha: a.commitSha ?? null,
       coverage: a.coverage ?? null,
+      frameworks: a.frameworks ?? [],
     };
   },
 });

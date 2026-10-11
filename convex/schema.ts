@@ -50,6 +50,9 @@ export default defineSchema({
     // has moved on.
     commitSha: v.optional(v.string()),
     coverage: v.optional(coverageValidator),
+    // The frameworks the adapters found, in detection order. Absent until the
+    // run completes; empty when none matched.
+    frameworks: v.optional(v.array(v.string())),
   })
     .index("by_org", ["orgId"])
     .index("by_org_project", ["orgId", "projectId"])

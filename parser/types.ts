@@ -1,7 +1,7 @@
 // The shape the parser writes. Everything built after phase 3 reads this, so
 // changing it is a contract change: bump SCHEMA_VERSION.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type EdgeKind = "import" | "reexport" | "dynamic";
 
@@ -89,12 +89,21 @@ export type Coverage = {
   tsconfigError: string | null;
 };
 
+/** The role an adapter gave a file. A file no convention named has no entry. */
+export type FileRole = { path: string; role: string };
+
+/** A route whose method and full pattern are both written in the code. */
+export type Route = { method: string; pattern: string; file: string };
+
 export type ParseResult = {
   schemaVersion: typeof SCHEMA_VERSION;
   /** Name of the parsed directory (not its absolute path). */
   root: string;
-  adapter: string;
+  /** Ids of the adapters that matched a package, in detection order; empty when none did. */
+  frameworks: string[];
   files: FileNode[];
   edges: Edge[];
+  roles: FileRole[];
+  routes: Route[];
   coverage: Coverage;
 };
