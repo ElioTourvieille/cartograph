@@ -142,7 +142,12 @@ export const writeEdges = pipelineMutation({
       v.object({
         from: v.string(),
         to: v.string(),
-        kind: v.union(v.literal("import"), v.literal("reexport"), v.literal("dynamic")),
+        kind: v.union(
+          v.literal("import"),
+          v.literal("reexport"),
+          v.literal("dynamic"),
+          v.literal("require"),
+        ),
       }),
     ),
   },

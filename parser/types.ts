@@ -1,9 +1,9 @@
 // The shape the parser writes. Everything built after phase 3 reads this, so
 // changing it is a contract change: bump SCHEMA_VERSION.
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
-export type EdgeKind = "import" | "reexport" | "dynamic";
+export type EdgeKind = "import" | "reexport" | "dynamic" | "require";
 
 export type FileNode = {
   /** Posix path relative to the parsed directory. */

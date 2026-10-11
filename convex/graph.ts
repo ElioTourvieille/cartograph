@@ -53,7 +53,12 @@ export const edges = orgQuery({
     v.object({
       from: v.string(),
       to: v.string(),
-      kind: v.union(v.literal("import"), v.literal("reexport"), v.literal("dynamic")),
+      kind: v.union(
+        v.literal("import"),
+        v.literal("reexport"),
+        v.literal("dynamic"),
+        v.literal("require"),
+      ),
     }),
   ),
   handler: async (ctx, { analysisId, paginationOpts }) => {
@@ -69,9 +74,8 @@ export const edges = orgQuery({
     return {
       ...result,
       page: result.page.flatMap((e) =>
-        // Every stored edge resolved to a file. The kind "require" exists in
-        // the schema for a later phase and is not written yet.
-        e.toPath === undefined || e.kind === "require"
+        // Every stored edge resolved to a file.
+        e.toPath === undefined
           ? []
           : [{ from: e.fromPath, to: e.toPath, kind: e.kind }],
       ),

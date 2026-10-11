@@ -48,7 +48,7 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[], path: st
   return s as T;
 }
 
-const KINDS = ["import", "reexport", "dynamic"] as const;
+const KINDS = ["import", "reexport", "dynamic", "require"] as const;
 
 function tally(value: unknown, path: string): Tally {
   const o = rec(value, path);
@@ -158,6 +158,7 @@ export function parseResult(input: unknown): ParseResult {
       import: tally(byKind.import, "$.coverage.byKind.import"),
       reexport: tally(byKind.reexport, "$.coverage.byKind.reexport"),
       dynamic: tally(byKind.dynamic, "$.coverage.byKind.dynamic"),
+      require: tally(byKind.require, "$.coverage.byKind.require"),
     },
     excluded: groups(
       c.excluded,

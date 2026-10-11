@@ -25,7 +25,12 @@ const occurrence = v.object({
   from: v.string(),
   line: v.number(),
   specifier: v.union(v.string(), v.null()),
-  kind: v.union(v.literal("import"), v.literal("reexport"), v.literal("dynamic")),
+  kind: v.union(
+    v.literal("import"),
+    v.literal("reexport"),
+    v.literal("dynamic"),
+    v.literal("require"),
+  ),
 });
 
 const group = v.object({

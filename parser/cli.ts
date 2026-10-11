@@ -66,7 +66,7 @@ function print({ coverage: c, files, edges, root, frameworks, roles, routes }: P
 
   console.log("\nImports vus, par issue :");
   console.log(`  ${row("tous", c.imports)}`);
-  for (const kind of ["import", "reexport", "dynamic"] as const) {
+  for (const kind of ["import", "reexport", "dynamic", "require"] as const) {
     console.log(`  ${row(kind, c.byKind[kind])}`);
   }
 

@@ -28,7 +28,7 @@ import { walk } from "./walk.ts";
 
 const MAX_FILE_BYTES = 1_000_000; // above this it is a bundle, not source
 const MAX_EXAMPLES = 5;
-const EDGE_KINDS: EdgeKind[] = ["import", "reexport", "dynamic"];
+const EDGE_KINDS: EdgeKind[] = ["import", "reexport", "dynamic", "require"];
 
 const posix = (p: string): string => p.replace(/\\/g, "/");
 const emptyTally = (): Tally => ({
@@ -120,6 +120,7 @@ export function parseRepository(
     import: emptyTally(),
     reexport: emptyTally(),
     dynamic: emptyTally(),
+    require: emptyTally(),
   };
   const excluded = new Map<ExcludedReason, ReasonGroup<ExcludedReason>>();
   const unresolved = new Map<UnresolvedReason, ReasonGroup<UnresolvedReason>>();

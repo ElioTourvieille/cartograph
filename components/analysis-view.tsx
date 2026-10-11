@@ -162,7 +162,7 @@ function Loaded({
       pair.kinds.add(e.kind);
       byPair.set(key, pair);
     }
-    const order: EdgeKind[] = ["import", "reexport", "dynamic"];
+    const order: EdgeKind[] = ["import", "reexport", "dynamic", "require"];
     const pairs = [...byPair.values()].map((p) => ({
       from: p.from,
       to: p.to,

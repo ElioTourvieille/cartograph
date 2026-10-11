@@ -1,13 +1,15 @@
 import { fallbackAdapter, type Adapter } from "../adapter.ts";
+import { express } from "./express.ts";
 import { nestjs } from "./nestjs.ts";
 import { nextjs } from "./nextjs.ts";
 import { react } from "./react.ts";
 
 // The fixed order detection runs in. The first adapter whose test a package
 // passes is the one used for it, so a package that depends on both Next.js and
-// React is a Next.js one. Nothing matching leaves the fallback, which knows no
+// React is a Next.js one. Express goes before React: a package that declares
+// `express` is a server, and `react` alone describes almost any front end. Nothing matching leaves the fallback, which knows no
 // framework at all.
-export const ADAPTERS: readonly Adapter[] = [nextjs, nestjs, react];
+export const ADAPTERS: readonly Adapter[] = [nextjs, nestjs, express, react];
 
 export function adapterFor(dependencies: ReadonlySet<string>): Adapter {
   return ADAPTERS.find((adapter) => adapter.detect(dependencies)) ?? fallbackAdapter;
