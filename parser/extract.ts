@@ -9,9 +9,10 @@ export type RawImport = {
   line: number;
 };
 
-// The three things that make an edge: a plain import, a re-export
-// (`export … from`), and a dynamic import with a literal string. `require()`
-// is deliberately not read.
+// The four things that make an edge: a plain import, a re-export
+// (`export … from`), a dynamic import with a literal string, and a CommonJS
+// `require()`. A require whose argument is not a literal is recorded with no
+// specifier, so it is counted and reported, never dropped.
 export function extractImports(file: tsm.SourceFile): RawImport[] {
   const found: RawImport[] = [];
 
@@ -39,6 +40,34 @@ export function extractImports(file: tsm.SourceFile): RawImport[] {
         ? arg.getLiteralValue()
         : null;
     found.push({ kind: "dynamic", specifier: literal, line: call.getStartLineNumber() });
+  }
+
+  // CommonJS. Only the global `require`, called with exactly one argument:
+  // `require.resolve(...)` and `module.require(...)` are other things.
+  for (const call of file.getDescendantsOfKind(tsm.SyntaxKind.CallExpression)) {
+    const callee = call.getExpression();
+    if (!tsm.Node.isIdentifier(callee) || callee.getText() !== "require") continue;
+    const args = call.getArguments();
+    if (args.length !== 1) continue;
+    const arg = args[0];
+    const literal =
+      tsm.Node.isStringLiteral(arg) || tsm.Node.isNoSubstitutionTemplateLiteral(arg)
+        ? arg.getLiteralValue()
+        : null;
+    found.push({ kind: "require", specifier: literal, line: call.getStartLineNumber() });
+  }
+
+  // TypeScript's own form of it: `import x = require("y")`.
+  for (const decl of file.getDescendantsOfKind(tsm.SyntaxKind.ImportEqualsDeclaration)) {
+    const reference = decl.getModuleReference();
+    if (!tsm.Node.isExternalModuleReference(reference)) continue;
+    const expression = reference.getExpression();
+    const literal =
+      expression !== undefined &&
+      (tsm.Node.isStringLiteral(expression) || tsm.Node.isNoSubstitutionTemplateLiteral(expression))
+        ? expression.getLiteralValue()
+        : null;
+    found.push({ kind: "require", specifier: literal, line: decl.getStartLineNumber() });
   }
 
   return found;
@@ -113,6 +142,36 @@ export function extractFacts(file: tsm.SourceFile, watch: ReadonlySet<string>): 
     } else if (tsm.Node.isExportAssignment(statement)) {
       exports.add("default");
     }
+  }
+
+  // CommonJS: `exports.name = …`, `module.exports.name = …`, and
+  // `module.exports = { a, b }` (its keys) or `module.exports = x` (the one
+  // thing it exports, called "default" as the ES form is).
+  for (const statement of file.getStatements()) {
+    if (!tsm.Node.isExpressionStatement(statement)) continue;
+    const expression = statement.getExpression();
+    if (!tsm.Node.isBinaryExpression(expression)) continue;
+    if (expression.getOperatorToken().getKind() !== tsm.SyntaxKind.EqualsToken) continue;
+    const target = expression.getLeft().getText();
+    if (target === "module.exports") {
+      const value = expression.getRight();
+      if (tsm.Node.isObjectLiteralExpression(value)) {
+        for (const property of value.getProperties()) {
+          if (
+            tsm.Node.isPropertyAssignment(property) ||
+            tsm.Node.isShorthandPropertyAssignment(property) ||
+            tsm.Node.isMethodDeclaration(property)
+          ) {
+            exports.add(property.getName());
+          }
+        }
+      } else {
+        exports.add("default");
+      }
+      continue;
+    }
+    const named = /^(?:module\.)?exports\.([A-Za-z_$][\w$]*)$/.exec(target);
+    if (named !== null) exports.add(named[1]);
   }
 
   const classes: ClassFact[] = file.getClasses().map((c) => ({

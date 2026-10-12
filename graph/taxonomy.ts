@@ -34,7 +34,7 @@ export const TESTS: RoleDef = role("tests", "Tests");
 export const UNIDENTIFIED: RoleDef = role("unidentified", "Fichiers non identifiés");
 
 /** The order frameworks are tried in, and listed in. The first match wins. */
-export const FRAMEWORK_ORDER = ["nextjs", "nestjs", "react"] as const;
+export const FRAMEWORK_ORDER = ["nextjs", "nestjs", "express", "react"] as const;
 
 export const FRAMEWORKS: Readonly<Record<string, FrameworkDef>> = {
   nextjs: {
@@ -72,6 +72,20 @@ export const FRAMEWORKS: Readonly<Record<string, FrameworkDef>> = {
       role("nestjs:decorator", "Decorators"),
       role("nestjs:strategy", "Strategies"),
       role("nestjs:bootstrap", "Bootstrap", true),
+    ],
+  },
+  express: {
+    label: "Express",
+    roles: [
+      role("express:router", "Routers"),
+      role("express:controller", "Controllers"),
+      role("express:service", "Services"),
+      role("express:model", "Models"),
+      role("express:middleware", "Middleware"),
+      role("express:view", "Views"),
+      role("express:util", "Utils"),
+      role("express:config", "Config"),
+      role("express:entry", "Entry files", true),
     ],
   },
   react: {
