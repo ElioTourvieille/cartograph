@@ -107,11 +107,19 @@ export default defineSchema({
     analysisId: v.id("analyses"),
     filePath: v.string(),
     // Hash of the file when the explanation was written, to detect staleness.
+    // For a folded folder, a hash over its files' hashes.
     contentHash: v.string(),
     text: v.string(),
+    // What it was cached under: the subject, its content, the model that wrote
+    // it and the prompt's version. Re-pinning a model changes the key and so
+    // invalidates only that model's explanations.
+    key: v.optional(v.string()),
+    kind: v.optional(v.union(v.literal("file"), v.literal("folder"))),
+    model: v.optional(v.string()),
   })
     .index("by_org", ["orgId"])
-    .index("by_org_analysis", ["orgId", "analysisId"]),
+    .index("by_org_analysis", ["orgId", "analysisId"])
+    .index("by_org_analysis_key", ["orgId", "analysisId", "key"]),
 
   fileRoles: defineTable({
     orgId: v.string(),

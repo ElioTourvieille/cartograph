@@ -1,6 +1,9 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import { classifyAction } from "@/app/actions/ai";
+import type { Id } from "@/convex/_generated/dataModel";
+import { ExplanationPanel, type Entry } from "./explanation";
 import {
   fileDetail,
   indexEdges,
@@ -30,6 +33,8 @@ type Tab = "structure" | "explication";
 type Props = {
   data: Graph;
   categories: Categories;
+  /** The analysis being shown, which an explanation is asked and cached under. */
+  analysisId?: Id<"analyses">;
   fold: Fold;
   selection: Selection | null;
   hover: Hover;
@@ -40,6 +45,7 @@ type Props = {
 export function DetailPane({
   data,
   categories,
+  analysisId,
   fold,
   selection,
   hover,
@@ -49,6 +55,10 @@ export function DetailPane({
   // Kept here, not reset when the selection changes: someone comparing
   // explanations across files should not reopen the tab each time.
   const [tab, setTab] = useState<Tab>("structure");
+  // What has been explained stays here for as long as the pane does: move the
+  // selection away and back and the answer is still there, with no second click.
+  const [explained, setExplained] = useState<Readonly<Record<string, Entry>>>({});
+  const known = useMemo(() => new Set(data.files.map((f) => f.path)), [data.files]);
   const index = useMemo(() => indexEdges(data.edges), [data.edges]);
   const summary = useMemo(() => summarize(data), [data]);
   const found = useMemo(
@@ -68,7 +78,7 @@ export function DetailPane({
     >
       {selection === null ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <Summary summary={summary} found={found} {...link} />
+          <Summary summary={summary} found={found} analysisId={analysisId} {...link} />
         </div>
       ) : (
         <>
@@ -82,7 +92,28 @@ export function DetailPane({
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {tab === "explication" ? (
-              <p className="text-xs text-muted">Aucune explication pour l&apos;instant.</p>
+              <ExplanationPanel
+                key={selection.kind === "file" ? selection.path : `folder:${selection.id}`}
+                analysisId={analysisId}
+                subject={
+                  selection.kind === "file"
+                    ? { kind: "file", path: selection.path }
+                    : {
+                        kind: "folder",
+                        id: selection.id,
+                        paths: fold.nodes.find((n) => n.id === selection.id)?.files ?? [],
+                      }
+                }
+                entry={explained[selection.kind === "file" ? `file:${selection.path}` : `folder:${selection.id}`]}
+                onEntry={(entry) =>
+                  setExplained((all) => ({
+                    ...all,
+                    [selection.kind === "file" ? `file:${selection.path}` : `folder:${selection.id}`]: entry,
+                  }))
+                }
+                known={known}
+                link={{ onSelectFile, onHover }}
+              />
             ) : selection.kind === "file" ? (
               <FileView
                 key={selection.path}
@@ -135,8 +166,13 @@ type LinkProps = {
 function Summary({
   summary,
   found,
+  analysisId,
   ...link
-}: { summary: ReturnType<typeof summarize>; found: Insights } & LinkProps) {
+}: {
+  summary: ReturnType<typeof summarize>;
+  found: Insights;
+  analysisId: Id<"analyses"> | undefined;
+} & LinkProps) {
   return (
     <div className="flex flex-col gap-3">
       <div>
@@ -173,6 +209,9 @@ function Summary({
       <p className="text-xs text-muted">
         {summary.unidentified} fichiers qu&apos;aucune convention n&apos;a identifiés.
       </p>
+      {summary.unidentified > 0 && analysisId !== undefined && (
+        <ClassifyControl analysisId={analysisId} />
+      )}
 
       <InsightsPanel found={found} {...link} />
     </div>
@@ -555,5 +594,51 @@ function RoutesTable({ routes, ...link }: { routes: Graph["routes"] } & LinkProp
         ))}
       </ul>
     </Section>
+  );
+}
+
+// Asks a small model for a role for the files no convention named. A button and
+// not an automatic step: it costs, and the person should see that it does. Each
+// click looks at the next group of files; a role the model could not decide on
+// is simply left without one.
+function ClassifyControl({ analysisId }: { analysisId: Id<"analyses"> }) {
+  const [state, setState] = useState<
+    | { status: "idle"; next: number; note: string | null }
+    | { status: "running"; next: number }
+    | { status: "error"; next: number; error: string }
+  >({ status: "idle", next: 0, note: null });
+
+  const run = async () => {
+    const from = state.next;
+    setState({ status: "running", next: from });
+    const result = await classifyAction(analysisId, from);
+    if (!result.ok) {
+      setState({ status: "error", next: from, error: result.error });
+      return;
+    }
+    setState({
+      status: "idle",
+      next: result.next,
+      note:
+        `${result.saved} fichiers classés sur ${result.scanned} examinés` +
+        (result.remaining > 0 ? `, ${result.remaining} restent à examiner.` : "."),
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        disabled={state.status === "running"}
+        onClick={() => void run()}
+        className="w-fit cursor-pointer rounded border border-border px-2 py-1 text-[11px] disabled:opacity-50"
+      >
+        {state.status === "running" ? "Classement en cours…" : "Déduire les rôles avec un modèle"}
+      </button>
+      {state.status === "idle" && state.note !== null && (
+        <p className="text-[10px] text-muted">{state.note}</p>
+      )}
+      {state.status === "error" && <p className="text-[10px]">{state.error}</p>}
+    </div>
   );
 }

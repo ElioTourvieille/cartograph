@@ -10,6 +10,7 @@
 
 import type * as analyses from "../analyses.js";
 import type * as crons from "../crons.js";
+import type * as explanations from "../explanations.js";
 import type * as graph from "../graph.js";
 import type * as lib_limits from "../lib/limits.js";
 import type * as lib_org from "../lib/org.js";
@@ -29,6 +30,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   analyses: typeof analyses;
   crons: typeof crons;
+  explanations: typeof explanations;
   graph: typeof graph;
   "lib/limits": typeof lib_limits;
   "lib/org": typeof lib_org;

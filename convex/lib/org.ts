@@ -123,6 +123,11 @@ export type OrgDb = ReturnType<typeof scopedTables> & {
   // lookup "one analysis per repository" rests on. Never a scan.
   projectByRepoKey(key: string): Promise<Doc<"projects"> | null>;
   analysisOfProject(projectId: Id<"projects">): Promise<Doc<"analyses"> | null>;
+  // One cached explanation by its key, through its own index.
+  explanationByKey(
+    analysisId: Id<"analyses">,
+    key: string,
+  ): Promise<Doc<"explanations"> | null>;
   // Fetching by id goes through the organization too: a row that belongs to
   // someone else comes back as null, exactly as if it did not exist.
   get<T extends TableNames>(table: T, id: Id<T>): Promise<Doc<T> | null>;
@@ -139,6 +144,13 @@ function orgDb(db: DatabaseReader, orgId: string): OrgDb {
       db
         .query("projects")
         .withIndex("by_org_repo_key", (q) => q.eq("orgId", orgId).eq("repoKey", key))
+        .first(),
+    explanationByKey: (analysisId, key) =>
+      db
+        .query("explanations")
+        .withIndex("by_org_analysis_key", (q) =>
+          q.eq("orgId", orgId).eq("analysisId", analysisId).eq("key", key),
+        )
         .first(),
     analysisOfProject: (projectId) =>
       db
@@ -169,6 +181,7 @@ export type OrgWriteDb = OrgDb & {
   insertEdge(doc: Insertable<"edges">): Promise<Id<"edges">>;
   insertFileRole(doc: Insertable<"fileRoles">): Promise<Id<"fileRoles">>;
   insertRoute(doc: Insertable<"routes">): Promise<Id<"routes">>;
+  insertExplanation(doc: Insertable<"explanations">): Promise<Id<"explanations">>;
   patchAnalysis(
     id: Id<"analyses">,
     fields: Partial<Insertable<"analyses">>,
@@ -193,6 +206,7 @@ function orgWriteDb(db: DatabaseWriter, orgId: string): OrgWriteDb {
     insertEdge: (doc) => db.insert("edges", { ...doc, orgId }),
     insertFileRole: (doc) => db.insert("fileRoles", { ...doc, orgId }),
     insertRoute: (doc) => db.insert("routes", { ...doc, orgId }),
+    insertExplanation: (doc) => db.insert("explanations", { ...doc, orgId }),
     async patchAnalysis(id, fields) {
       await owned("analyses", id);
       await db.patch("analyses", id, fields);
