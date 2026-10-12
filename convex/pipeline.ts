@@ -72,7 +72,7 @@ export const touch = pipelineMutation({
 });
 
 // Deletes up to BATCH of the analysis's earlier rows, across every table that
-// can hold some. Called until it says it is done: a re-run clears before it
+// holds results of a run (not the explanations, which are a cache). Called until it says it is done: a re-run clears before it
 // writes, and a single mutation could not delete 14 000 documents.
 export const clear = pipelineMutation({
   args: {},
@@ -93,7 +93,8 @@ export const clear = pipelineMutation({
     await remove("edges", await rows.edges().take(BATCH - deleted));
     await remove("files", await rows.files().take(BATCH - deleted));
     await remove("routes", await rows.routes().take(BATCH - deleted));
-    await remove("explanations", await rows.explanations().take(BATCH - deleted));
+    // Explanations are not cleared: they are keyed on content, so one that no
+    // longer matches simply is not found, and one that does still holds.
     await remove("fileRoles", await rows.fileRoles().take(BATCH - deleted));
     await remove("insights", await rows.insights().take(BATCH - deleted));
 

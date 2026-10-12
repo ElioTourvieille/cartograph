@@ -209,6 +209,7 @@ function Loaded({
       coverage={coverage ?? undefined}
       commit={commit ?? undefined}
       action={<Rerun id={analysisId} confirm />}
+      analysisId={analysisId}
     />
   );
 }

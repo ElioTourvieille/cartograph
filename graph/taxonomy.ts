@@ -33,6 +33,42 @@ export const TESTS: RoleDef = role("tests", "Tests");
 /** A file in a repository with frameworks, to which no convention gave a role. */
 export const UNIDENTIFIED: RoleDef = role("unidentified", "Fichiers non identifiés");
 
+/**
+ * The only roles a model may give a file. None of them is structural: a page,
+ * a route or a controller decides the route table and which files the
+ * framework reaches by itself, so convention owns those and the model is never
+ * offered them. The request is shaped from this list, and the answer is checked
+ * against it again in code.
+ */
+export const INFERABLE_ROLES = [
+  "service",
+  "repository",
+  "model",
+  "util",
+  "config",
+  "component",
+  "hook",
+] as const;
+export type InferableRole = (typeof INFERABLE_ROLES)[number];
+
+/** The id a model-given role is stored under, apart from the adapters' ids. */
+export const inferredRoleId = (role: InferableRole): string => `inferred:${role}`;
+
+const LABEL: Record<InferableRole, string> = {
+  service: "Services",
+  repository: "Repositories",
+  model: "Models",
+  util: "Utils",
+  config: "Config",
+  component: "Components",
+  hook: "Hooks",
+};
+
+/** Shown with "déduit" so a role a model chose is never mistaken for a convention. */
+export const INFERRED: readonly RoleDef[] = INFERABLE_ROLES.map((r) =>
+  role(inferredRoleId(r), `${LABEL[r]} (déduit)`),
+);
+
 /** The order frameworks are tried in, and listed in. The first match wins. */
 export const FRAMEWORK_ORDER = ["nextjs", "nestjs", "express", "react"] as const;
 
@@ -105,15 +141,17 @@ export const ROLES: ReadonlyMap<string, RoleDef> = new Map(
   [
     TESTS,
     UNIDENTIFIED,
+    ...INFERRED,
     ...Object.values(FRAMEWORKS).flatMap((f) => f.roles),
   ].map((r) => [r.id, r]),
 );
 
 /**
  * The rail for a repository: for each framework found, in the fixed order, its
- * roles in their fixed order; then Tests; then what nothing identified.
+ * roles in their fixed order; then Tests; then the roles a model deduced; then
+ * what nothing identified.
  */
 export function railOrder(frameworks: readonly string[]): RoleDef[] {
   const present = FRAMEWORK_ORDER.filter((id) => frameworks.includes(id));
-  return [...present.flatMap((id) => FRAMEWORKS[id].roles), TESTS, UNIDENTIFIED];
+  return [...present.flatMap((id) => FRAMEWORKS[id].roles), TESTS, ...INFERRED, UNIDENTIFIED];
 }

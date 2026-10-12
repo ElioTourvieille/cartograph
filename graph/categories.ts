@@ -34,7 +34,9 @@ const PALETTE_SIZE = 12;
 export function categorize(
   graph: Pick<Graph, "frameworks" | "files" | "roles">,
 ): Categories {
-  const framework = graph.frameworks.length > 0;
+  // The role rail is used as soon as there is a framework, or any role at all
+  // (a model may have deduced some in a repository no adapter matched).
+  const framework = graph.frameworks.length > 0 || graph.roles.length > 0;
 
   const list: Category[] = framework
     ? railOrder(graph.frameworks).map((role, i) => ({

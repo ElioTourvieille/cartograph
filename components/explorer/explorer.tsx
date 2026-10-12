@@ -10,6 +10,7 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fold as foldFiles, type Fold } from "@/graph/fold";
+import type { Id } from "@/convex/_generated/dataModel";
 import { categorize, type Categories } from "@/graph/categories";
 import { layout } from "@/graph/layout";
 import { buildScene, type Source } from "@/graph/scene";
@@ -43,12 +44,15 @@ export function Explorer({
   coverage,
   commit,
   action,
+  analysisId,
 }: {
   data: Graph;
   coverage?: StoredCoverage;
   commit?: string;
   /** Rendered in the coverage banner, beside its own controls. */
   action?: ReactNode;
+  /** The stored analysis shown, which explanations are asked and cached under. */
+  analysisId?: Id<"analyses">;
 }) {
   const fold = useMemo(() => foldFiles(data.files), [data.files]);
   const categories = useMemo(() => categorize(data), [data]);
@@ -127,6 +131,7 @@ export function Explorer({
       <DetailPane
         data={data}
         categories={categories}
+        analysisId={analysisId}
         fold={fold}
         selection={selection}
         hover={hover}
