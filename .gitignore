@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Jeux de données et résultats des évaluations (contiennent du code de dépôts analysés)
+/evals/data/
+/evals/results/

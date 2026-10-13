@@ -9,7 +9,10 @@
     "lint": "eslint",
     "check:isolation": "node scripts/check-isolation.mjs",
     "fold-report": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/fold-report.ts",
-    "parse": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON parser/cli.ts"
+    "parse": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON parser/cli.ts",
+    "eval:paths": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON evals/paths.ts",
+    "eval:roles": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON evals/roles.ts",
+    "eval:prompts": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON evals/prompts.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
