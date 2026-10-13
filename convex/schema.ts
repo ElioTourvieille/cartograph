@@ -116,6 +116,9 @@ export default defineSchema({
     key: v.optional(v.string()),
     kind: v.optional(v.union(v.literal("file"), v.literal("folder"))),
     model: v.optional(v.string()),
+    // Every path the model was handed to write this. The invented-path check
+    // tests the text against exactly this set; absent on older rows.
+    shown: v.optional(v.array(v.string())),
   })
     .index("by_org", ["orgId"])
     .index("by_org_analysis", ["orgId", "analysisId"])

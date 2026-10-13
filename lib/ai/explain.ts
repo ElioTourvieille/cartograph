@@ -1,10 +1,20 @@
 import { fetchMutation, fetchQuery } from "convex/nextjs";
-import { traceable } from "langsmith/traceable";
+import { Client } from "langsmith";
+import { getCurrentRunTree, traceable } from "langsmith/traceable";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { AiError, ai } from "./client";
-import { loadGraph, neighboursOf, roleLabel, type Loaded } from "./context";
+import { loadGraph, neighboursOf, roleLabel } from "./context";
+import { checkPaths } from "./invented";
 import { EXPLAIN_MODEL, PROMPT_VERSION } from "./models";
+import {
+  FILE_SYSTEM,
+  FOLDER_FILES_LISTED,
+  FOLDER_SYSTEM,
+  fileUserPrompt,
+  folderUserPrompt,
+  type Neighbour,
+} from "./prompts";
 import { fetchSource, MAX_SOURCE_CHARS, sha256 } from "./source";
 
 // Explaining a file, and explaining a folded folder. Two different questions,
@@ -18,35 +28,25 @@ import { fetchSource, MAX_SOURCE_CHARS, sha256 } from "./source";
 // did. The cache read happens INSIDE the traced function, so a hit is a
 // recorded run with no model call in it, and a broken cache is visible as a
 // run that does call the model.
+//
+// Every explanation that is freshly written is also checked, in the same traced
+// run, for paths the model was never shown. That is the live form of the
+// invented-path evaluator: it scores real traffic as it happens, and the score
+// is attached to the run as feedback.
 
-export type Explanation = { text: string; cached: boolean; model: string };
-
-// The prompt permits exactly three pieces of formatting, because the pane is
-// narrow and the renderer draws exactly these: inline code, bold, bullets.
-const FORMAT_RULES = `Mise en forme : uniquement du \`code en ligne\`, du **gras** et des puces qui commencent par "- ". Jamais de titre, de tableau, de bloc de code ni de lien. Cite chaque fichier par son chemin exact, en code en ligne. N'écris jamais un chemin qui ne figure pas dans les listes fournies.`;
-
-const FILE_SYSTEM = `Tu aides un développeur à comprendre un dépôt qu'il ne connaît pas. Réponds en français, en un ou deux courts paragraphes (120 mots au plus).
-Explique ce que fait le fichier donné, dans le contexte de ses voisins réels : les fichiers qu'il importe et ceux qui l'importent, dont la liste complète t'est fournie. Dis à quoi il sert pour eux et ce qu'ils attendent de lui.
-Ne prétends jamais que deux fichiers sont liés si les listes ne le montrent pas. Ne juge pas la qualité du code, ne note rien, ne propose pas de correction.
-${FORMAT_RULES}`;
-
-const FOLDER_SYSTEM = `Tu aides un développeur à comprendre un dépôt qu'il ne connaît pas. Réponds en français, en un ou deux courts paragraphes (140 mots au plus).
-On te décrit un dossier : ce qu'il contient, ce qui l'importe de l'extérieur et ce qu'il importe. Réponds à deux questions : qu'y a-t-il là-dedans, et pourquoi tant de fichiers pointent-ils vers lui. Appuie-toi sur les nombres fournis, sans en inventer.
-Parle du dossier, pas d'un seul fichier qu'il contient. Ne juge pas la qualité du code, ne note rien.
-${FORMAT_RULES}`;
+export type Explanation = {
+  text: string;
+  cached: boolean;
+  model: string;
+  /** Paths in the text the model was not shown; null when not checked (a cache hit). */
+  invented: string[] | null;
+};
 
 const keyOf = (kind: "file" | "folder", subject: string, hash: string): string =>
   `${kind}|${subject}|${hash}|${EXPLAIN_MODEL}|${PROMPT_VERSION}`;
 
-const list = (paths: readonly string[], graph: Loaded): string =>
-  paths.length === 0
-    ? "(aucun)"
-    : paths
-        .map((p) => {
-          const role = roleLabel(graph, p);
-          return role === null ? `- ${p}` : `- ${p} (${role})`;
-        })
-        .join("\n");
+const withRole = (graph: Parameters<typeof roleLabel>[0], paths: readonly string[]): Neighbour[] =>
+  paths.map((path) => ({ path, role: roleLabel(graph, path) }));
 
 async function generate(system: string, user: string): Promise<string> {
   const message = await ai().messages.create({
@@ -61,6 +61,31 @@ async function generate(system: string, user: string): Promise<string> {
     .trim();
   if (text === "") throw new AiError("Le modèle n'a renvoyé aucune explication.");
   return text;
+}
+
+let feedbackClient: Client | undefined;
+
+// The live evaluator. Deterministic: set membership against the paths shown.
+// Attached to the current run when tracing is on; the score is returned either
+// way so the run's output carries it too.
+async function scoreLive(text: string, shown: readonly string[]): Promise<string[]> {
+  const check = checkPaths(text, new Set(shown));
+  const run = getCurrentRunTree(true);
+  if (run !== undefined) {
+    try {
+      feedbackClient ??= new Client();
+      await feedbackClient.createFeedback(run.id, "invented_paths", {
+        score: check.score,
+        comment:
+          check.invented.length === 0
+            ? `${check.tokens.length} chemins cités, aucun inventé.`
+            : `Inventés : ${check.invented.join(", ")}`,
+      });
+    } catch {
+      // Scoring must never break an explanation.
+    }
+  }
+  return check.invented;
 }
 
 // --- a file -------------------------------------------------------------------
@@ -85,7 +110,7 @@ export async function explainFile(
       const key = keyOf("file", path, stored.hash);
       const hit = await fetchQuery(api.explanations.cached, { analysisId, key }, { token });
       if (hit !== null) {
-        return { text: hit.text, cached: true, model: hit.model ?? EXPLAIN_MODEL };
+        return { text: hit.text, cached: true, model: hit.model ?? EXPLAIN_MODEL, invented: null };
       }
 
       const progress = await fetchQuery(api.analyses.progress, { analysisId }, { token });
@@ -101,25 +126,18 @@ export async function explainFile(
         throw new AiError("Le fichier n'a pas pu être relu depuis GitHub.");
       }
       const { imports, dependents } = neighboursOf(graph, path);
-      const clipped = source.length > MAX_SOURCE_CHARS;
-      const role = roleLabel(graph, path);
 
-      const text = await generate(
-        FILE_SYSTEM,
-        [
-          `Fichier : ${path}${role === null ? "" : ` (${role})`}`,
-          `Dépôt : ${progress.repo}`,
-          ``,
-          `Fichiers qu'il importe (${imports.length}) :`,
-          list(imports, graph),
-          ``,
-          `Fichiers qui l'importent (${dependents.length}) :`,
-          list(dependents, graph),
-          ``,
-          `Contenu${clipped ? " (tronqué)" : ""} :`,
-          source.slice(0, MAX_SOURCE_CHARS),
-        ].join("\n"),
-      );
+      const built = fileUserPrompt({
+        path,
+        role: roleLabel(graph, path),
+        repo: progress.repo,
+        imports: withRole(graph, imports),
+        dependents: withRole(graph, dependents),
+        source: source.slice(0, MAX_SOURCE_CHARS),
+        clipped: source.length > MAX_SOURCE_CHARS,
+      });
+      const text = await generate(FILE_SYSTEM, built.text);
+      const invented = await scoreLive(text, built.shown);
 
       await fetchMutation(
         api.explanations.save,
@@ -131,10 +149,11 @@ export async function explainFile(
           contentHash: stored.hash,
           model: EXPLAIN_MODEL,
           text,
+          shown: built.shown,
         },
         { token },
       );
-      return { text, cached: false, model: EXPLAIN_MODEL };
+      return { text, cached: false, model: EXPLAIN_MODEL, invented };
     },
     {
       name: "explain-file",
@@ -182,7 +201,7 @@ export async function explainFolder(
       const key = keyOf("folder", folderId, hash);
       const hit = await fetchQuery(api.explanations.cached, { analysisId, key }, { token });
       if (hit !== null) {
-        return { text: hit.text, cached: true, model: hit.model ?? EXPLAIN_MODEL };
+        return { text: hit.text, cached: true, model: hit.model ?? EXPLAIN_MODEL, invented: null };
       }
 
       const graph = await loadGraph(token, analysisId);
@@ -204,8 +223,6 @@ export async function explainFolder(
       }
       const top = (m: Map<string, number>, n: number): [string, number][] =>
         [...m].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, n);
-      const withCount = (rows: [string, number][]): string =>
-        rows.length === 0 ? "(aucun)" : rows.map(([p, c]) => `- ${p} (${c})`).join("\n");
 
       const byRole = new Map<string, number>();
       let lines = 0;
@@ -215,29 +232,22 @@ export async function explainFolder(
         const role = roleLabel(graph, f.path) ?? "sans rôle identifié";
         byRole.set(role, (byRole.get(role) ?? 0) + 1);
       }
-      const totalIncoming = [...fromOutside.values()].reduce((a, b) => a + b, 0);
 
-      const text = await generate(
-        FOLDER_SYSTEM,
-        [
-          `Dossier : ${folderId === "." ? "(racine du dépôt)" : folderId}`,
-          `Contenu : ${paths.length} fichiers, ${lines} lignes au total, ${internal} imports entre ses propres fichiers.`,
-          `Répartition : ${[...byRole].map(([r, c]) => `${r} ${c}`).join(", ")}.`,
-          ``,
-          `Fichiers du dossier :`,
-          list(paths.slice(0, 60), graph),
-          paths.length > 60 ? `(et ${paths.length - 60} autres)` : ``,
-          ``,
-          `Imports qui arrivent de l'extérieur : ${totalIncoming}, venant de ${fromOutside.size} fichiers.`,
-          `Fichiers du dossier les plus importés de l'extérieur :`,
-          withCount(top(intoFile, 10)),
-          `Fichiers extérieurs qui importent le plus ce dossier :`,
-          withCount(top(fromOutside, 12)),
-          ``,
-          `Fichiers extérieurs que ce dossier importe le plus :`,
-          withCount(top(towards, 10)),
-        ].join("\n"),
-      );
+      const built = folderUserPrompt({
+        folderId,
+        fileCount: paths.length,
+        lines,
+        internalImports: internal,
+        byRole: [...byRole],
+        files: withRole(graph, paths.slice(0, FOLDER_FILES_LISTED)),
+        incomingTotal: [...fromOutside.values()].reduce((a, b) => a + b, 0),
+        incomingFrom: fromOutside.size,
+        topInto: top(intoFile, 10),
+        topFrom: top(fromOutside, 12),
+        topTowards: top(towards, 10),
+      });
+      const text = await generate(FOLDER_SYSTEM, built.text);
+      const invented = await scoreLive(text, built.shown);
 
       await fetchMutation(
         api.explanations.save,
@@ -249,10 +259,11 @@ export async function explainFolder(
           contentHash: hash,
           model: EXPLAIN_MODEL,
           text,
+          shown: built.shown,
         },
         { token },
       );
-      return { text, cached: false, model: EXPLAIN_MODEL };
+      return { text, cached: false, model: EXPLAIN_MODEL, invented };
     },
     {
       name: "explain-folder",

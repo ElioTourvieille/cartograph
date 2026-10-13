@@ -35,9 +35,10 @@ export const save = orgMutation({
     contentHash: v.string(),
     model: v.string(),
     text: v.string(),
+    shown: v.array(v.string()),
   },
   returns: v.null(),
-  handler: async (ctx, { analysisId, key, kind, subject, contentHash, model, text }) => {
+  handler: async (ctx, { analysisId, key, kind, subject, contentHash, model, text, shown }) => {
     const analysis = await ctx.db.get("analyses", analysisId);
     if (analysis === null) throw new ConvexError("Analyse introuvable.");
     if (text.length === 0 || text.length > MAX_TEXT) {
@@ -54,6 +55,7 @@ export const save = orgMutation({
       key,
       kind,
       model,
+      shown,
     });
     return null;
   },
