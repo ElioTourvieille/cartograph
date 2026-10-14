@@ -16,9 +16,9 @@ export type Loaded = {
   roles: Map<string, string>;
 };
 
-type Page<T> = { page: T[]; isDone: boolean; continueCursor: string };
+export type Page<T> = { page: T[]; isDone: boolean; continueCursor: string };
 
-async function collect<T>(
+export async function collect<T>(
   fetchPage: (cursor: string | null) => Promise<Page<T>>,
 ): Promise<T[]> {
   const rows: T[] = [];

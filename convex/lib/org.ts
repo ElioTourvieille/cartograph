@@ -28,19 +28,42 @@ import type { DataModel, Doc, Id, TableNames } from "../_generated/dataModel";
 // `orgMutation`, which read the organization off the verified token and hand
 // the function a database handle that can only see that organization's rows.
 
+// Who is calling. Two kinds of token reach the builders, and both carry the
+// organization the same way, so the scoping below is one code path:
+//   - a person's Clerk session: the organization, nothing narrower;
+//   - an agent credential, minted by our server for ONE analysis: the same
+//     organization claim plus an `analysis` claim. It can read that analysis
+//     and nothing else, and it cannot write at all.
+type Caller = { orgId: string; analysisId: string | null };
+
 // Clerk's v2 session token carries the active organization as `o.id`; older
 // templates use a flat `org_id`.
-async function readOrgId(ctx: Pick<QueryCtx, "auth">): Promise<string> {
+async function readCaller(ctx: Pick<QueryCtx, "auth">): Promise<Caller> {
   const identity = await ctx.auth.getUserIdentity();
   if (identity === null) throw new ConvexError("Non connecté.");
+
+  const claim = identity.analysis;
+  let analysisId: string | null = null;
+  if (claim !== undefined) {
+    if (typeof claim !== "string" || claim === "") {
+      throw new ConvexError("Jeton d'analyse invalide.");
+    }
+    analysisId = claim;
+  }
+
   const o = identity.o;
   if (typeof o === "object" && o !== null && "id" in o && o.id) {
-    return String(o.id);
+    return { orgId: String(o.id), analysisId };
   }
   const flat = identity.org_id;
-  if (typeof flat === "string" && flat !== "") return flat;
+  if (typeof flat === "string" && flat !== "") return { orgId: flat, analysisId };
   throw new ConvexError("Aucune organisation active.");
 }
+
+const ONE_ANALYSIS = "Ce jeton est limité à une analyse.";
+const refuse = (): never => {
+  throw new ConvexError(ONE_ANALYSIS);
+};
 
 // One entry per table, and `satisfies` makes a table added to the schema
 // without an entry here a type error. Each goes through the organization
@@ -136,30 +159,65 @@ export type OrgDb = ReturnType<typeof scopedTables> & {
   normalizeId<T extends TableNames>(table: T, raw: string): Id<T> | null;
 };
 
-function orgDb(db: DatabaseReader, orgId: string): OrgDb {
+// `only` is the analysis an agent credential names, or null for a person. With
+// one, every handle that could reach beyond that analysis refuses, and a row is
+// visible only if it IS that analysis, its project, or one of its rows.
+function orgDb(db: DatabaseReader, orgId: string, only: string | null): OrgDb {
+  const tables: ReturnType<typeof scopedTables> =
+    only === null
+      ? scopedTables(db, orgId)
+      : {
+          projects: refuse,
+          analyses: refuse,
+          files: refuse,
+          edges: refuse,
+          routes: refuse,
+          explanations: refuse,
+          fileRoles: refuse,
+          insights: refuse,
+        };
   return {
-    ...scopedTables(db, orgId),
-    inAnalysis: (analysisId) => analysisTables(db, orgId, analysisId),
-    projectByRepoKey: (key) =>
-      db
+    ...tables,
+    inAnalysis: (analysisId) => {
+      if (only !== null && analysisId !== only) return refuse();
+      return analysisTables(db, orgId, analysisId);
+    },
+    projectByRepoKey: (key) => {
+      if (only !== null) return refuse();
+      return db
         .query("projects")
         .withIndex("by_org_repo_key", (q) => q.eq("orgId", orgId).eq("repoKey", key))
-        .first(),
-    explanationByKey: (analysisId, key) =>
-      db
+        .first();
+    },
+    explanationByKey: (analysisId, key) => {
+      if (only !== null) return refuse();
+      return db
         .query("explanations")
         .withIndex("by_org_analysis_key", (q) =>
           q.eq("orgId", orgId).eq("analysisId", analysisId).eq("key", key),
         )
-        .first(),
-    analysisOfProject: (projectId) =>
-      db
+        .first();
+    },
+    analysisOfProject: (projectId) => {
+      if (only !== null) return refuse();
+      return db
         .query("analyses")
         .withIndex("by_org_project", (q) => q.eq("orgId", orgId).eq("projectId", projectId))
-        .first(),
+        .first();
+    },
     async get(table, id) {
       const doc = await db.get(table, id);
-      return doc !== null && doc.orgId === orgId ? doc : null;
+      if (doc === null || doc.orgId !== orgId) return null;
+      if (only === null) return doc;
+      if (table === "analyses") return id === only ? doc : null;
+      if (table === "projects") {
+        const claimed = db.normalizeId("analyses", only);
+        const analysis = claimed === null ? null : await db.get("analyses", claimed);
+        return analysis !== null && analysis.orgId === orgId && analysis.projectId === id
+          ? doc
+          : null;
+      }
+      return "analysisId" in doc && doc.analysisId === only ? doc : null;
     },
     normalizeId: (table, raw) => db.normalizeId(table, raw),
   };
@@ -192,7 +250,8 @@ export type OrgWriteDb = OrgDb & {
 export type OrgWriteCtx = { db: OrgWriteDb };
 
 function orgWriteDb(db: DatabaseWriter, orgId: string): OrgWriteDb {
-  const read = orgDb(db, orgId);
+  // Writers are people: an agent credential never reaches this far.
+  const read = orgDb(db, orgId, null);
   const owned = async (table: TableNames, id: Id<TableNames>) => {
     if ((await read.get(table, id)) === null) {
       throw new ConvexError("Ligne introuvable.");
@@ -255,8 +314,8 @@ export function orgQuery(
     args: def.args,
     returns: def.returns,
     handler: async (ctx, args) => {
-      const orgId = await readOrgId(ctx);
-      return def.handler({ db: orgDb(ctx.db, orgId) }, args);
+      const caller = await readCaller(ctx);
+      return def.handler({ db: orgDb(ctx.db, caller.orgId, caller.analysisId) }, args);
     },
   });
 }
@@ -274,8 +333,10 @@ export function orgMutation(
     args: def.args,
     returns: def.returns,
     handler: async (ctx, args) => {
-      const orgId = await readOrgId(ctx);
-      return def.handler({ db: orgWriteDb(ctx.db, orgId) }, args);
+      const caller = await readCaller(ctx);
+      // A credential for one analysis reads; it does not write.
+      if (caller.analysisId !== null) throw new ConvexError(ONE_ANALYSIS);
+      return def.handler({ db: orgWriteDb(ctx.db, caller.orgId) }, args);
     },
   });
 }

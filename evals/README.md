@@ -11,6 +11,9 @@ avec la CLI Convex, avec une organisation explicite). Depuis la racine du projet
 | `pnpm eval:roles --org org_…` | Précision des rôles déduits, sur des fichiers dont la convention donne la vérité. Deux chiffres : chemin masqué (à retenir) et chemin réel. | Haiku 4.5 |
 | `pnpm eval:prompts --org org_… [--n 20]` | Prompt actuel (v1) contre le prompt de référence (v0, `evals/retired/`), en deux expériences LangSmith côte à côte. | Sonnet 5.5 écrit, Opus 5.5 juge |
 
+| `pnpm eval:agent --self-test` | Prouve que les détecteurs (plomberie, refus, note, chemin inventé) savent échouer. | Non |
+| `pnpm eval:agent --org org_… --analysis <id>` | L'agent consulte-t-il avant de répondre, décline-t-il le jugement, cite-t-il des chemins hors de ce que les consultations ont renvoyé, parle-t-il de son fonctionnement ? Agent (`pnpm agent:dev`) et app (`pnpm dev`) lancés. | Sonnet 5.5 répond, aucun juge |
+
 `--org` est l'identifiant Clerk de l'organisation (`org_…`).
 
 ## À savoir

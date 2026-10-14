@@ -9,9 +9,8 @@ import { READ_PAGE } from "@/convex/lib/limits";
 import { Explorer } from "@/components/explorer/explorer";
 import { STAGE_LABEL, STAGE_ORDER } from "@/components/stages";
 import type { StoredCoverage } from "@/graph/coverage";
-import { computeFan } from "@/parser/metrics";
+import { assembleGraph } from "@/graph/assemble";
 import type { Graph } from "@/graph/types";
-import type { EdgeKind } from "@/parser/types";
 
 const DATE = new Intl.DateTimeFormat("fr-CH", { dateStyle: "short", timeStyle: "medium" });
 
@@ -154,39 +153,14 @@ function Loaded({
     routes.status === "Exhausted";
   const graph = useMemo<Graph | null>(() => {
     if (!ready) return null;
-    // Rows hold one edge per kind; the explorer wants one per pair.
-    const byPair = new Map<string, { from: string; to: string; kinds: Set<EdgeKind> }>();
-    for (const e of edges.results) {
-      const key = `${e.from}\0${e.to}`;
-      const pair = byPair.get(key) ?? { from: e.from, to: e.to, kinds: new Set<EdgeKind>() };
-      pair.kinds.add(e.kind);
-      byPair.set(key, pair);
-    }
-    const order: EdgeKind[] = ["import", "reexport", "dynamic", "require"];
-    const pairs = [...byPair.values()].map((p) => ({
-      from: p.from,
-      to: p.to,
-      kinds: order.filter((k) => p.kinds.has(k)),
-    }));
-    const fan = computeFan(
-      files.results.map((f) => f.path),
-      pairs,
-    );
-    return {
-      root: repo?.split("/").pop() ?? "dépôt",
+    return assembleGraph({
+      repo,
       frameworks,
+      files: files.results,
+      edges: edges.results,
       roles: roles.results,
       routes: routes.results,
-      files: files.results.map((f) => ({
-        path: f.path,
-        folder: f.folder,
-        lines: f.lines,
-        hash: f.hash,
-        fanIn: fan.get(f.path)?.fanIn ?? 0,
-        fanOut: fan.get(f.path)?.fanOut ?? 0,
-      })),
-      edges: pairs,
-    };
+    });
   }, [ready, files.results, edges.results, roles.results, routes.results, frameworks, repo]);
 
   if (graph === null) {
