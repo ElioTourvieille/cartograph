@@ -1,3 +1,6 @@
+packages:
+  - agent
+
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver

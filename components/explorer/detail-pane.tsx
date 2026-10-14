@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { classifyAction } from "@/app/actions/ai";
 import type { Id } from "@/convex/_generated/dataModel";
+import { AskPanel, useAsk } from "./ask";
 import { ExplanationPanel, type Entry } from "./explanation";
 import {
   fileDetail,
@@ -55,6 +56,11 @@ export function DetailPane({
   // Kept here, not reset when the selection changes: someone comparing
   // explanations across files should not reopen the tab each time.
   const [tab, setTab] = useState<Tab>("structure");
+  // Ask is a mode of the whole pane, not a tab: it is about the repository, so
+  // it must not vanish when nothing is selected. Toggling out returns to
+  // whatever was selected, and the conversation is kept above the pane.
+  const [mode, setMode] = useState<"detail" | "ask">("detail");
+  const ask = useAsk(analysisId);
   // What has been explained stays here for as long as the pane does: move the
   // selection away and back and the answer is still there, with no second click.
   const [explained, setExplained] = useState<Readonly<Record<string, Entry>>>({});
@@ -76,7 +82,24 @@ export function DetailPane({
       aria-label="Détail"
       className="flex w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-surface"
     >
-      {selection === null ? (
+      {analysisId !== undefined && (
+        <button
+          type="button"
+          aria-pressed={mode === "ask"}
+          onClick={() => setMode(mode === "ask" ? "detail" : "ask")}
+          className="shrink-0 cursor-pointer border-b border-border px-3 py-1.5 text-left text-xs hover:bg-foreground/5"
+        >
+          {mode === "ask" ? "← Retour au détail" : "Poser une question sur le dépôt"}
+        </button>
+      )}
+      {mode === "ask" ? (
+        <AskPanel
+          {...ask}
+          selectedPath={selection?.kind === "file" ? selection.path : null}
+          known={known}
+          link={{ onSelectFile, onHover }}
+        />
+      ) : selection === null ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
           <Summary summary={summary} found={found} analysisId={analysisId} {...link} />
         </div>
