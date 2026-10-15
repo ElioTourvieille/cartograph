@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition, type FormEvent } from "react";
+import { useEffect, useRef, useState, useTransition, type FormEvent } from "react";
 import { startAnalysis } from "@/app/actions/analyses";
+import { takePending } from "@/components/landing/pending";
 
 // The dashboard's form. An address already analysed leads to the existing
 // analysis; it never creates a second one.
@@ -11,6 +12,23 @@ export function RepoForm() {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // An address typed in the landing page's hero is waiting here after sign-in.
+  // It is taken once (the ref also covers React's double effect in development),
+  // shown in the field, and started: the field was the way in, not decoration.
+  const picked = useRef(false);
+  useEffect(() => {
+    if (picked.current) return;
+    picked.current = true;
+    const waiting = takePending();
+    if (waiting === null) return;
+    startTransition(async () => {
+      setUrl(waiting);
+      const result = await startAnalysis(waiting);
+      if (result.ok) router.push(`/analyses/${result.id}`);
+      else setError(result.error);
+    });
+  }, [router]);
 
   const submit = (event: FormEvent) => {
     event.preventDefault();

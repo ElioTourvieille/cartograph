@@ -3,6 +3,9 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 // The agent's tool surface has no session to protect: its caller is a process
 // holding a credential for one analysis, which the route checks through Convex.
 const isPublicRoute = createRouteMatcher([
+  // The root is the landing page when signed out and the dashboard when signed
+  // in; the page itself decides, and every other route stays protected.
+  "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
   "/api/agent/tools(.*)",
