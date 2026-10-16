@@ -20,9 +20,21 @@ function requireRunning(analysis: Doc<"analyses">): void {
 
 // Claims the analysis for this run. Only a queued analysis can be claimed, so
 // two processes cannot both run one analysis.
+//
+// For a private repository it also hands back the installation the analysis was
+// made through. That comes off the analysis row, which was created under a
+// verified token and an installation of the same organization: the pipeline's
+// caller never supplies it.
 export const begin = pipelineMutation({
   args: {},
-  returns: v.object({ owner: v.string(), name: v.string() }),
+  returns: v.object({
+    owner: v.string(),
+    name: v.string(),
+    installation: v.union(
+      v.null(),
+      v.object({ githubId: v.number(), account: v.string(), removed: v.boolean() }),
+    ),
+  }),
   handler: async (ctx) => {
     const { analysis } = ctx;
     if (analysis.status !== "queued") {
@@ -30,13 +42,52 @@ export const begin = pipelineMutation({
     }
     const project = await ctx.db.get("projects", analysis.projectId);
     if (project === null) throw new ConvexError("Dépôt introuvable.");
+    const installation =
+      analysis.installationId === undefined
+        ? null
+        : await ctx.db.get("installations", analysis.installationId);
+    if (analysis.installationId !== undefined && installation === null) {
+      throw new ConvexError("Installation introuvable.");
+    }
     await ctx.db.patchAnalysis(analysis._id, {
       status: "parsing",
-      stage: "fetch",
-      message: "Récupération de l'archive du dépôt.",
+      stage: installation === null ? "fetch" : "access",
+      message:
+        installation === null
+          ? "Récupération de l'archive du dépôt."
+          : `Accès au dépôt par l'installation de ${installation.account}.`,
       updatedAt: Date.now(),
     });
-    return { owner: project.owner, name: project.name };
+    return {
+      owner: project.owner,
+      name: project.name,
+      installation:
+        installation === null
+          ? null
+          : {
+              githubId: installation.githubId,
+              account: installation.account,
+              removed: installation.removedAt !== undefined,
+            },
+    };
+  },
+});
+
+// GitHub says the installation no longer exists (it was uninstalled there).
+// Recorded against the installation this analysis was made through, so the
+// next run is refused without asking GitHub again and the screen can say why.
+export const installationGone = pipelineMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    requireRunning(ctx.analysis);
+    if (ctx.analysis.installationId !== undefined) {
+      const installation = await ctx.db.get("installations", ctx.analysis.installationId);
+      if (installation !== null && installation.removedAt === undefined) {
+        await ctx.db.patchInstallation(installation._id, { removedAt: Date.now() });
+      }
+    }
+    return null;
   },
 });
 

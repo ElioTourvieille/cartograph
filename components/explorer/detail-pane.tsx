@@ -36,6 +36,8 @@ type Props = {
   categories: Categories;
   /** The analysis being shown, which an explanation is asked and cached under. */
   analysisId?: Id<"analyses">;
+  /** Why the agent cannot be asked about this repository, when it cannot. */
+  askUnavailable?: string;
   fold: Fold;
   selection: Selection | null;
   hover: Hover;
@@ -47,6 +49,7 @@ export function DetailPane({
   data,
   categories,
   analysisId,
+  askUnavailable,
   fold,
   selection,
   hover,
@@ -82,7 +85,12 @@ export function DetailPane({
       aria-label="Détail"
       className="flex w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-surface"
     >
-      {analysisId !== undefined && (
+      {analysisId !== undefined && askUnavailable !== undefined && (
+        <p className="shrink-0 border-b border-border px-3 py-1.5 text-xs text-muted">
+          {askUnavailable}
+        </p>
+      )}
+      {analysisId !== undefined && askUnavailable === undefined && (
         <button
           type="button"
           aria-pressed={mode === "ask"}

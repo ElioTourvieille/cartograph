@@ -12,6 +12,8 @@ const CLI = join(process.cwd(), "node_modules", "convex", "bin", "main.js");
 
 function parse(output: string): unknown {
   const trimmed = output.trim();
+  // A function that returns null prints nothing at all.
+  if (trimmed === "") return null;
   try {
     return JSON.parse(trimmed);
   } catch {

@@ -8,22 +8,41 @@ import { createHash } from "node:crypto";
 export const MAX_SOURCE_CHARS = 40_000;
 
 /**
- * The file at a given commit of a public repository, or null if it is not
- * there or GitHub cannot be reached. Decoded as bytes, so a leading BOM is kept
- * exactly as the parser read it and the hash matches the stored one.
+ * The file at a given commit, or null if it is not there or GitHub cannot be
+ * reached. Decoded as bytes, so a leading BOM is kept exactly as the parser
+ * read it and the hash matches the stored one.
+ *
+ * With an installation token (a private repository) the file comes through the
+ * API as raw content, with that token; without one it comes from the public
+ * raw endpoint. The text is returned to the caller and held in memory for one
+ * request: nothing here writes it anywhere.
  */
 export async function fetchSource(
   owner: string,
   name: string,
   ref: string,
   path: string,
+  token?: string,
 ): Promise<string | null> {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
   try {
-    const response = await fetch(
-      `https://raw.githubusercontent.com/${owner}/${name}/${ref}/${encoded}`,
-      { signal: AbortSignal.timeout(20_000) },
-    );
+    const response =
+      token === undefined
+        ? await fetch(`https://raw.githubusercontent.com/${owner}/${name}/${ref}/${encoded}`, {
+            signal: AbortSignal.timeout(20_000),
+          })
+        : await fetch(
+            `https://api.github.com/repos/${owner}/${name}/contents/${encoded}?ref=${encodeURIComponent(ref)}`,
+            {
+              headers: {
+                Accept: "application/vnd.github.raw+json",
+                Authorization: `Bearer ${token}`,
+                "User-Agent": "cartograph",
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+              signal: AbortSignal.timeout(20_000),
+            },
+          );
     if (!response.ok) return null;
     return Buffer.from(await response.arrayBuffer()).toString("utf8");
   } catch {

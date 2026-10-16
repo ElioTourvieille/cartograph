@@ -26,9 +26,36 @@ export default defineSchema({
     .index("by_org", ["orgId"])
     .index("by_org_repo_key", ["orgId", "repoKey"]),
 
+  // One row per GitHub App installation an organization has connected. It holds
+  // the installation's id and the account it is on, and nothing that could
+  // read a repository: no token, no key. The App's private key lives in the
+  // server environment only, and a token is minted per run and thrown away.
+  installations: defineTable({
+    orgId: v.string(),
+    // GitHub's own id for the installation.
+    githubId: v.number(),
+    // The account it is installed on.
+    account: v.string(),
+    connectedAt: v.number(),
+    // Set when it is disconnected here, or when GitHub reports it gone. The
+    // row stays, so analyses made through it can still say where they came from.
+    removedAt: v.optional(v.number()),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_org_github", ["orgId", "githubId"])
+    // Not org-scoped on purpose: "is this installation already someone's" has
+    // to look across organizations. Only claimInstallation in lib/org.ts reads
+    // it, and it answers free / mine / other, never whose.
+    .index("by_github", ["githubId"]),
+
   analyses: defineTable({
     orgId: v.string(),
     projectId: v.id("projects"),
+    // The installation a private repository is read through. Set when the
+    // analysis is created, under the person's verified token and an
+    // installation of their own organization; the pipeline reads it from here
+    // and never from its caller. Absent for a public repository.
+    installationId: v.optional(v.id("installations")),
     status: v.union(
       v.literal("queued"),
       v.literal("parsing"),

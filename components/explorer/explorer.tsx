@@ -45,6 +45,7 @@ export function Explorer({
   commit,
   action,
   analysisId,
+  access,
 }: {
   data: Graph;
   coverage?: StoredCoverage;
@@ -53,6 +54,8 @@ export function Explorer({
   action?: ReactNode;
   /** The stored analysis shown, which explanations are asked and cached under. */
   analysisId?: Id<"analyses">;
+  /** Set for a private repository: the account it is read through, and whether that is still connected. */
+  access?: { account: string; removed: boolean };
 }) {
   const fold = useMemo(() => foldFiles(data.files), [data.files]);
   const categories = useMemo(() => categorize(data), [data]);
@@ -106,6 +109,13 @@ export function Explorer({
     <div className="-m-3 flex" style={{ height: "calc(100vh - 2.25rem)" }}>
       <Rail categories={categories} active={category} onPick={setCategory} />
       <div className="flex min-w-0 flex-1 flex-col">
+        {access !== undefined && (
+          <p className="shrink-0 border-b border-border bg-surface px-3 py-1.5 text-xs">
+            {access.removed
+              ? `L'installation GitHub${access.account === "" ? "" : ` de ${access.account}`} n'est plus connectée : cette analyse reste lisible, elle ne contient que des chemins et des liens, mais elle ne peut plus être relancée ni relue pour de nouvelles explications.`
+              : `Dépôt privé, lu par l'installation GitHub de ${access.account}. Le contenu des fichiers n'est jamais enregistré.`}
+          </p>
+        )}
         {coverage !== undefined && <CoverageBanner coverage={coverage} commit={commit} action={action} />}
         <div className="relative min-h-0 flex-1">
           <div className="absolute inset-0">
@@ -132,6 +142,11 @@ export function Explorer({
         data={data}
         categories={categories}
         analysisId={analysisId}
+        askUnavailable={
+          access === undefined
+            ? undefined
+            : "L'agent n'est pas disponible pour un dépôt privé : ses traces ne peuvent pas encore être masquées."
+        }
         fold={fold}
         selection={selection}
         hover={hover}

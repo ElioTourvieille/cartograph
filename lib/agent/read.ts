@@ -35,6 +35,8 @@ export async function loadForCredential(token: string): Promise<Loaded> {
   // organization's analysis reads null.
   const progress = await fetchQuery(api.analyses.progress, { analysisId }, { token });
   if (progress === null) throw new Refused();
+  // A private analysis is never read for the agent (see app/api/agent/ask).
+  if (progress.access !== null) throw new Refused();
   if (progress.status !== "complete") throw new NotReady();
 
   const key = `${progress.id}:${progress.updatedAt}`;

@@ -86,6 +86,8 @@ function scopedTables(db: DatabaseReader, orgId: string) {
       db.query("fileRoles").withIndex("by_org", (q) => q.eq("orgId", orgId)),
     insights: () =>
       db.query("insights").withIndex("by_org", (q) => q.eq("orgId", orgId)),
+    installations: () =>
+      db.query("installations").withIndex("by_org", (q) => q.eq("orgId", orgId)),
   } satisfies {
     [T in TableNames]: () => Query<NamedTableInfo<DataModel, T>>;
   };
@@ -146,6 +148,8 @@ export type OrgDb = ReturnType<typeof scopedTables> & {
   // lookup "one analysis per repository" rests on. Never a scan.
   projectByRepoKey(key: string): Promise<Doc<"projects"> | null>;
   analysisOfProject(projectId: Id<"projects">): Promise<Doc<"analyses"> | null>;
+  // One installation of this organization by GitHub's id, through its own index.
+  installationByGithubId(githubId: number): Promise<Doc<"installations"> | null>;
   // One cached explanation by its key, through its own index.
   explanationByKey(
     analysisId: Id<"analyses">,
@@ -175,6 +179,7 @@ function orgDb(db: DatabaseReader, orgId: string, only: string | null): OrgDb {
           explanations: refuse,
           fileRoles: refuse,
           insights: refuse,
+          installations: refuse,
         };
   return {
     ...tables,
@@ -196,6 +201,13 @@ function orgDb(db: DatabaseReader, orgId: string, only: string | null): OrgDb {
         .withIndex("by_org_analysis_key", (q) =>
           q.eq("orgId", orgId).eq("analysisId", analysisId).eq("key", key),
         )
+        .first();
+    },
+    installationByGithubId: (githubId) => {
+      if (only !== null) return refuse();
+      return db
+        .query("installations")
+        .withIndex("by_org_github", (q) => q.eq("orgId", orgId).eq("githubId", githubId))
         .first();
     },
     analysisOfProject: (projectId) => {
@@ -240,6 +252,11 @@ export type OrgWriteDb = OrgDb & {
   insertFileRole(doc: Insertable<"fileRoles">): Promise<Id<"fileRoles">>;
   insertRoute(doc: Insertable<"routes">): Promise<Id<"routes">>;
   insertExplanation(doc: Insertable<"explanations">): Promise<Id<"explanations">>;
+  insertInstallation(doc: Insertable<"installations">): Promise<Id<"installations">>;
+  patchInstallation(
+    id: Id<"installations">,
+    fields: Partial<Insertable<"installations">>,
+  ): Promise<void>;
   patchAnalysis(
     id: Id<"analyses">,
     fields: Partial<Insertable<"analyses">>,
@@ -266,6 +283,11 @@ function orgWriteDb(db: DatabaseWriter, orgId: string): OrgWriteDb {
     insertFileRole: (doc) => db.insert("fileRoles", { ...doc, orgId }),
     insertRoute: (doc) => db.insert("routes", { ...doc, orgId }),
     insertExplanation: (doc) => db.insert("explanations", { ...doc, orgId }),
+    insertInstallation: (doc) => db.insert("installations", { ...doc, orgId }),
+    async patchInstallation(id, fields) {
+      await owned("installations", id);
+      await db.patch("installations", id, fields);
+    },
     async patchAnalysis(id, fields) {
       await owned("analyses", id);
       await db.patch("analyses", id, fields);
@@ -387,6 +409,67 @@ export function pipelineMutation(
       if (analysis === null) throw new ConvexError("Analyse introuvable.");
       return def.handler(
         { db: orgWriteDb(ctx.db, analysis.orgId), analysis },
+        args,
+      );
+    },
+  });
+}
+
+
+// --- claiming a GitHub installation -------------------------------------------
+//
+// Connecting an installation is the one write that has to look across
+// organizations: the same GitHub installation must never belong to two of them.
+// It is a person's own organization (read off their verified token, like every
+// other builder) AND the server's secret: the browser cannot call it, because
+// everything that proves an installation is really being returned from GitHub
+// (the signed state, the cookie, the check against GitHub) happens in our
+// server, which is the only holder of that secret. The handler gets one narrow
+// question to ask about other organizations, and it answers only free, mine
+// or other: never whose.
+
+export type ClaimState = "free" | "mine" | "other";
+export type ClaimCtx = {
+  db: OrgWriteDb;
+  claimState(githubId: number): Promise<ClaimState>;
+};
+
+export function claimMutation<
+  Args extends PropertyValidators,
+  Returns extends GenericValidator,
+>(
+  def: Def<Args, Returns, ClaimCtx> & NoOrgArg<Args>,
+): RegisteredMutation<
+  "public",
+  ObjectType<Args> & { secret: string },
+  Promise<Infer<Returns>>
+>;
+export function claimMutation(
+  def: Def<PropertyValidators, GenericValidator, ClaimCtx>,
+) {
+  return mutation({
+    args: { ...def.args, secret: v.string() },
+    returns: def.returns,
+    handler: async (ctx, { secret, ...args }) => {
+      const expected = process.env.PIPELINE_SECRET;
+      if (expected === undefined || expected === "") {
+        throw new ConvexError("PIPELINE_SECRET n'est pas défini sur ce déploiement.");
+      }
+      if (!sameSecret(secret, expected)) throw new ConvexError("Accès refusé.");
+      const caller = await readCaller(ctx);
+      if (caller.analysisId !== null) throw new ConvexError(ONE_ANALYSIS);
+      return def.handler(
+        {
+          db: orgWriteDb(ctx.db, caller.orgId),
+          claimState: async (githubId) => {
+            const rows = await ctx.db
+              .query("installations")
+              .withIndex("by_github", (q) => q.eq("githubId", githubId))
+              .take(2);
+            if (rows.length === 0) return "free";
+            return rows.every((r) => r.orgId === caller.orgId) ? "mine" : "other";
+          },
+        },
         args,
       );
     },

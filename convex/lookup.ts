@@ -15,6 +15,7 @@ export const exists = orgQuery({
       v.literal("explanations"),
       v.literal("fileRoles"),
       v.literal("insights"),
+      v.literal("installations"),
     ),
     id: v.string(),
   },
@@ -52,6 +53,10 @@ export const exists = orgQuery({
       case "insights":
         return visible(ctx.db.normalizeId("insights", id), (i) =>
           ctx.db.get("insights", i),
+        );
+      case "installations":
+        return visible(ctx.db.normalizeId("installations", id), (i) =>
+          ctx.db.get("installations", i),
         );
     }
   },

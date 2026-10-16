@@ -3,7 +3,8 @@ import { Client } from "langsmith";
 import { getCurrentRunTree, traceable } from "langsmith/traceable";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { AiError, ai } from "./client";
+import { accessOf, tokenFor, type Access } from "@/lib/github/access";
+import { AiError, ai, privateTracing } from "./client";
 import { loadGraph, neighboursOf, roleLabel } from "./context";
 import { checkPaths } from "./invented";
 import { EXPLAIN_MODEL, PROMPT_VERSION } from "./models";
@@ -48,8 +49,8 @@ const keyOf = (kind: "file" | "folder", subject: string, hash: string): string =
 const withRole = (graph: Parameters<typeof roleLabel>[0], paths: readonly string[]): Neighbour[] =>
   paths.map((path) => ({ path, role: roleLabel(graph, path) }));
 
-async function generate(system: string, user: string): Promise<string> {
-  const message = await ai().messages.create({
+async function generate(system: string, user: string, isPrivate: boolean): Promise<string> {
+  const message = await ai({ private: isPrivate }).messages.create({
     model: EXPLAIN_MODEL,
     max_tokens: 700,
     system,
@@ -68,7 +69,11 @@ let feedbackClient: Client | undefined;
 // The live evaluator. Deterministic: set membership against the paths shown.
 // Attached to the current run when tracing is on; the score is returned either
 // way so the run's output carries it too.
-async function scoreLive(text: string, shown: readonly string[]): Promise<string[]> {
+async function scoreLive(
+  text: string,
+  shown: readonly string[],
+  isPrivate: boolean,
+): Promise<string[]> {
   const check = checkPaths(text, new Set(shown));
   const run = getCurrentRunTree(true);
   if (run !== undefined) {
@@ -76,8 +81,11 @@ async function scoreLive(text: string, shown: readonly string[]): Promise<string
       feedbackClient ??= new Client();
       await feedbackClient.createFeedback(run.id, "invented_paths", {
         score: check.score,
-        comment:
-          check.invented.length === 0
+        // The names of invented files are part of what a private repository
+        // keeps out of the trace store: the score and the counts say enough.
+        comment: isPrivate
+          ? `${check.tokens.length} chemins cités, ${check.invented.length} inventé(s).`
+          : check.invented.length === 0
             ? `${check.tokens.length} chemins cités, aucun inventé.`
             : `Inventés : ${check.invented.join(", ")}`,
       });
@@ -88,12 +96,32 @@ async function scoreLive(text: string, shown: readonly string[]): Promise<string
   return check.invented;
 }
 
+// What a run records about the cache, as metadata: the one thing that stays
+// readable on a run whose inputs and outputs are withheld. A hit is a run with
+// "cache: hit" and no model call under it; a miss has both.
+function noteCache(result: "hit" | "miss"): void {
+  const run = getCurrentRunTree(true);
+  if (run !== undefined) run.metadata = { ...run.metadata, cache: result };
+}
+
+// What a traced run is built with. A private analysis goes to the masking
+// trace store and says so in a tag, so those runs can be told apart.
+function tracing(access: Access, kind: "file" | "folder") {
+  return {
+    ...(access.private ? { client: privateTracing() } : {}),
+    tags: ["explain", kind, ...(access.private ? ["private"] : [])],
+  };
+}
+
 // --- a file -------------------------------------------------------------------
 
 export async function explainFile(
   token: string,
   input: { analysisId: Id<"analyses">; path: string },
 ): Promise<Explanation> {
+  // Whether the repository is private, and through which installation, is read
+  // off the analysis row under the person's own token before anything else.
+  const access = await accessOf(token, input.analysisId);
   // Built per call so the token stays in this closure: a traced function
   // records its arguments, and a token must never be one of them.
   const run = traceable(
@@ -110,20 +138,31 @@ export async function explainFile(
       const key = keyOf("file", path, stored.hash);
       const hit = await fetchQuery(api.explanations.cached, { analysisId, key }, { token });
       if (hit !== null) {
+        noteCache("hit");
         return { text: hit.text, cached: true, model: hit.model ?? EXPLAIN_MODEL, invented: null };
       }
+      noteCache("miss");
 
       const progress = await fetchQuery(api.analyses.progress, { analysisId }, { token });
       if (progress === null || progress.repo === null || progress.commitSha === null) {
         throw new AiError("L'analyse n'a pas de commit enregistré.");
       }
       const [owner, name] = progress.repo.split("/");
+      // For a private repository the file is read again at the analysed commit
+      // with a token minted for this request. It is held in memory for the
+      // length of the request and written nowhere. If the repository cannot be
+      // reached any more, that is what the answer says.
+      const ghToken = await tokenFor(access);
       const [graph, source] = await Promise.all([
         loadGraph(token, analysisId),
-        fetchSource(owner, name, progress.commitSha, path),
+        fetchSource(owner, name, progress.commitSha, path, ghToken),
       ]);
       if (source === null) {
-        throw new AiError("Le fichier n'a pas pu être relu depuis GitHub.");
+        throw new AiError(
+          access.private
+            ? "Le fichier n'a pas pu être relu : le dépôt n'est plus accessible à l'installation GitHub."
+            : "Le fichier n'a pas pu être relu depuis GitHub.",
+        );
       }
       const { imports, dependents } = neighboursOf(graph, path);
 
@@ -136,8 +175,8 @@ export async function explainFile(
         source: source.slice(0, MAX_SOURCE_CHARS),
         clipped: source.length > MAX_SOURCE_CHARS,
       });
-      const text = await generate(FILE_SYSTEM, built.text);
-      const invented = await scoreLive(text, built.shown);
+      const text = await generate(FILE_SYSTEM, built.text, access.private);
+      const invented = await scoreLive(text, built.shown, access.private);
 
       await fetchMutation(
         api.explanations.save,
@@ -158,7 +197,7 @@ export async function explainFile(
     {
       name: "explain-file",
       run_type: "chain",
-      tags: ["explain", "file"],
+      ...tracing(access, "file"),
       metadata: { model: EXPLAIN_MODEL, promptVersion: PROMPT_VERSION },
     },
   );
@@ -171,6 +210,7 @@ export async function explainFolder(
   token: string,
   input: { analysisId: Id<"analyses">; folderId: string; paths: string[] },
 ): Promise<Explanation> {
+  const access = await accessOf(token, input.analysisId);
   const run = traceable(
     async (args: {
       analysisId: Id<"analyses">;
@@ -201,8 +241,10 @@ export async function explainFolder(
       const key = keyOf("folder", folderId, hash);
       const hit = await fetchQuery(api.explanations.cached, { analysisId, key }, { token });
       if (hit !== null) {
+        noteCache("hit");
         return { text: hit.text, cached: true, model: hit.model ?? EXPLAIN_MODEL, invented: null };
       }
+      noteCache("miss");
 
       const graph = await loadGraph(token, analysisId);
       const inside = new Set(paths);
@@ -246,8 +288,8 @@ export async function explainFolder(
         topFrom: top(fromOutside, 12),
         topTowards: top(towards, 10),
       });
-      const text = await generate(FOLDER_SYSTEM, built.text);
-      const invented = await scoreLive(text, built.shown);
+      const text = await generate(FOLDER_SYSTEM, built.text, access.private);
+      const invented = await scoreLive(text, built.shown, access.private);
 
       await fetchMutation(
         api.explanations.save,
@@ -268,7 +310,7 @@ export async function explainFolder(
     {
       name: "explain-folder",
       run_type: "chain",
-      tags: ["explain", "folder"],
+      ...tracing(access, "folder"),
       metadata: { model: EXPLAIN_MODEL, promptVersion: PROMPT_VERSION },
     },
   );

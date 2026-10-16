@@ -3,9 +3,11 @@ import { pipeline } from "node:stream/promises";
 import * as tar from "tar";
 import { isSourceFile } from "../../parser/walk.ts";
 
-// Fetching a public repository as an archive. No repository scope is asked of
-// anyone and no token is read or stored: these are the unauthenticated GitHub
-// endpoints, which only ever see public repositories.
+// Fetching a repository as an archive. A public repository uses the
+// unauthenticated GitHub endpoints, which only ever see public repositories and
+// need no token. A private one passes an installation token that was minted for
+// this run alone (lib/github/app.ts) and is dropped with it; this file never
+// stores or logs one.
 
 /** An expected failure, with a message a person can act on. */
 export class PipelineError extends Error {}
@@ -20,11 +22,24 @@ const HEADERS = {
 /** A repository bigger than this is not a repository to map in a browser. */
 export const MAX_ARCHIVE_BYTES = 250 * 1024 * 1024;
 
-async function github(url: string, accept?: string, timeoutMs = 60_000): Promise<Response> {
+async function github(
+  url: string,
+  accept?: string,
+  timeoutMs = 60_000,
+  token?: string,
+): Promise<Response> {
+  const headers = {
+    ...HEADERS,
+    ...(accept === undefined ? {} : { Accept: accept }),
+    ...(token === undefined ? {} : { Authorization: `Bearer ${token}` }),
+  };
   let response: Response;
   try {
+    // The token goes to GitHub's API, which answers a tarball with a redirect to
+    // a signed address on another host. fetch does not forward Authorization
+    // across hosts, which is what is wanted: the signed address needs none.
     response = await fetch(url, {
-      headers: accept === undefined ? HEADERS : { ...HEADERS, Accept: accept },
+      headers,
       redirect: "follow",
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -33,7 +48,9 @@ async function github(url: string, accept?: string, timeoutMs = 60_000): Promise
   }
   if (response.status === 404) {
     throw new PipelineError(
-      "Dépôt introuvable ou privé : seul un dépôt GitHub public peut être analysé.",
+      token === undefined
+        ? "Dépôt introuvable ou privé. Pour un dépôt privé, connectez l'App GitHub dans Paramètres, puis choisissez-le dans « Choisir un dépôt privé »."
+        : "Le dépôt n'est plus accessible à l'installation GitHub : il a été retiré de ses dépôts, supprimé ou renommé.",
     );
   }
   if (response.status === 403 || response.status === 429) {
@@ -47,10 +64,16 @@ async function github(url: string, accept?: string, timeoutMs = 60_000): Promise
 }
 
 /** The full sha of the default branch's latest commit. */
-export async function latestCommit(owner: string, name: string): Promise<string> {
+export async function latestCommit(
+  owner: string,
+  name: string,
+  token?: string,
+): Promise<string> {
   const response = await github(
     `${API}/repos/${owner}/${name}/commits/HEAD`,
     "application/vnd.github.sha",
+    60_000,
+    token,
   );
   const sha = (await response.text()).trim();
   if (!/^[0-9a-f]{40}$/.test(sha)) {
@@ -72,11 +95,13 @@ export async function downloadArchive(
   name: string,
   sha: string,
   dest: string,
+  token?: string,
 ): Promise<NotExtracted[]> {
   const response = await github(
     `${API}/repos/${owner}/${name}/tarball/${sha}`,
     undefined,
     10 * 60_000,
+    token,
   );
   if (response.body === null) throw new PipelineError("L'archive est vide.");
 
