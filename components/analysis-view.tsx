@@ -7,7 +7,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { READ_PAGE } from "@/convex/lib/limits";
 import { Explorer } from "@/components/explorer/explorer";
-import { STAGE_LABEL, STAGE_ORDER } from "@/components/stages";
+import { STAGE_LABEL, STAGE_ORDER, type StageId } from "@/components/stages";
 import type { StoredCoverage } from "@/graph/coverage";
 import { assembleGraph } from "@/graph/assemble";
 import type { Graph } from "@/graph/types";
@@ -33,13 +33,17 @@ export function AnalysisView({ id }: { id: string }) {
         repo={progress.repo}
         commit={progress.commitSha}
         coverage={progress.coverage}
+        access={progress.access}
       />
     );
   }
 
   const failed = progress.status === "failed";
   const current = failed ? progress.failedStage : progress.stage;
-  const at = current === null ? 0 : STAGE_ORDER.indexOf(current);
+  // "access" opens a run on a private repository only; a public one never has it.
+  const order: readonly StageId[] =
+    progress.access === null ? STAGE_ORDER.filter((s) => s !== "access") : STAGE_ORDER;
+  const at = current === null ? 0 : Math.max(0, order.indexOf(current));
 
   return (
     <div className="flex max-w-xl flex-col gap-3">
@@ -52,7 +56,7 @@ export function AnalysisView({ id }: { id: string }) {
       </div>
 
       <ol className="flex flex-col gap-1 text-xs">
-        {STAGE_ORDER.map((stage, i) => {
+        {order.map((stage, i) => {
           const state = i < at ? "done" : i === at ? (failed ? "failed" : "current") : "todo";
           return (
             <li key={stage} className={state === "todo" ? "text-muted" : ""}>
@@ -120,6 +124,7 @@ function Loaded({
   repo,
   commit,
   coverage,
+  access,
 }: {
   id: string;
   analysisId: Id<"analyses">;
@@ -127,6 +132,8 @@ function Loaded({
   repo: string | null;
   commit: string | null;
   coverage: StoredCoverage | null;
+  /** Set for a private repository: where it is read through, and whether that is still connected. */
+  access: { account: string; removed: boolean } | null;
 }) {
   const files = usePaginatedQuery(api.graph.files, { analysisId: id }, { initialNumItems: READ_PAGE });
   const edges = usePaginatedQuery(api.graph.edges, { analysisId: id }, { initialNumItems: READ_PAGE });
@@ -184,6 +191,7 @@ function Loaded({
       commit={commit ?? undefined}
       action={<Rerun id={analysisId} confirm />}
       analysisId={analysisId}
+      access={access ?? undefined}
     />
   );
 }

@@ -19,6 +19,7 @@ const ORG_TABLES = [
   "insights",
   "analyses",
   "projects",
+  "installations",
 ] as const satisfies readonly TableNames[];
 
 // A table added to the schema and not listed above makes this a type error,

@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { Client } from "langsmith";
 import { wrapAnthropic } from "langsmith/wrappers/anthropic";
 
 // The one place in the codebase that constructs the AI client. Every call to a
@@ -18,9 +19,29 @@ import { wrapAnthropic } from "langsmith/wrappers/anthropic";
 /** An expected failure with a message a person can act on. */
 export class AiError extends Error {}
 
-let client: ReturnType<typeof build> | undefined;
+// The trace store for a PRIVATE repository. It is a second LangSmith client
+// that records every run (its name, stage, timing, tags and metadata, which is
+// where the cache hit or miss is written) but replaces what went in and what
+// came out with a fixed note. A prompt built from a client's source, and the
+// model's answer about it, therefore never reach the store. The masking is
+// done by the client that ships the runs, so it covers the model call and the
+// functions around it alike, and it is chosen per analysis: a public
+// repository keeps tracing exactly as before.
+const WITHHELD = { contenu: "masqué : dépôt privé" };
 
-function build() {
+let maskedTracing: Client | undefined;
+export function privateTracing(): Client {
+  maskedTracing ??= new Client({
+    hideInputs: () => WITHHELD,
+    hideOutputs: () => WITHHELD,
+  });
+  return maskedTracing;
+}
+
+let client: ReturnType<typeof build> | undefined;
+let privateClient: ReturnType<typeof build> | undefined;
+
+function build(tracing?: Client) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (apiKey === undefined || apiKey === "") {
     throw new AiError("ANTHROPIC_API_KEY manque dans .env.local : aucun modèle ne peut être appelé.");
@@ -28,10 +49,21 @@ function build() {
   // Wrapped whether or not tracing is configured: with no LangSmith key the
   // wrapper does nothing, and the call succeeds untraced. aiStatus() is how
   // that state is made visible.
-  return wrapAnthropic(new Anthropic({ apiKey }));
+  return wrapAnthropic(
+    new Anthropic({ apiKey }),
+    tracing === undefined ? undefined : { client: tracing },
+  );
 }
 
-export function ai() {
+/**
+ * The one AI client. `private: true` is for an analysis of a private
+ * repository: the same client, wrapped so that its traces carry no content.
+ */
+export function ai(options: { private?: boolean } = {}) {
+  if (options.private === true) {
+    privateClient ??= build(privateTracing());
+    return privateClient;
+  }
   client ??= build();
   return client;
 }

@@ -47,6 +47,67 @@ export const analyses = internalQuery({
   },
 });
 
+// Every row of one table that belongs to an organization, a page at a time, for
+// the leak check (scripts/check-private-leak.ts): it looks for a string in
+// everything the organization has stored. Internal, explicit organization, read
+// through the organization index like the rest of this file.
+const SEARCHABLE = v.union(
+  v.literal("projects"),
+  v.literal("analyses"),
+  v.literal("files"),
+  v.literal("edges"),
+  v.literal("routes"),
+  v.literal("explanations"),
+  v.literal("fileRoles"),
+  v.literal("insights"),
+  v.literal("installations"),
+);
+
+export const rows = internalQuery({
+  args: {
+    orgId: v.string(),
+    table: SEARCHABLE,
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
+  returns: v.object({
+    page: v.array(v.string()),
+    isDone: v.boolean(),
+    cursor: v.string(),
+  }),
+  handler: async (ctx, { orgId, table, cursor, numItems }) => {
+    const result = await ctx.db
+      .query(table)
+      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .paginate({ cursor, numItems: Math.min(numItems, PAGE_CAP) });
+    return {
+      page: result.page.map((row) => JSON.stringify(row)),
+      isDone: result.isDone,
+      cursor: result.continueCursor,
+    };
+  },
+});
+
+// An organization's installations as stored, for the installation isolation
+// check: it compares them before and after a request from another organization.
+export const installations = internalQuery({
+  args: { orgId: v.string() },
+  returns: v.array(
+    v.object({
+      id: v.id("installations"),
+      githubId: v.number(),
+      removed: v.boolean(),
+    }),
+  ),
+  handler: async (ctx, { orgId }) => {
+    const rows = await ctx.db
+      .query("installations")
+      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .take(50);
+    return rows.map((r) => ({ id: r._id, githubId: r.githubId, removed: r.removedAt !== undefined }));
+  },
+});
+
 // The explanations of an organization, newest first, with the set of paths the
 // model was shown when it wrote each one (null on rows written before it was
 // kept).

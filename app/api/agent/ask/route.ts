@@ -70,6 +70,16 @@ export async function POST(request: Request): Promise<Response> {
   );
   if (progress === null) return fail(404, "Analyse introuvable.");
   if (progress.status !== "complete") return fail(409, "L'analyse n'est pas terminée.");
+  // The agent runs in its own process and its runs, with the paths it looked up
+  // and the answers it wrote, are recorded by that process's own tracing, which
+  // cannot be masked per analysis. Until it can, a private repository is not
+  // put in front of it.
+  if (progress.access !== null) {
+    return fail(
+      403,
+      "L'agent n'est pas disponible pour un dépôt privé : ses traces ne peuvent pas encore être masquées.",
+    );
+  }
 
   const client = new Client({ apiUrl: AGENT_URL });
 

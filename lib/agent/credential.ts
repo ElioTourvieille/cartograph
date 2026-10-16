@@ -57,6 +57,29 @@ export function mintCredential(input: {
   return `${body}.${b64url(signature)}`;
 }
 
+/**
+ * A token that stands for a whole organization, as a signed-in person's does
+ * (no `analysis` claim). Only the isolation checks use it, to act as a test
+ * organization from a terminal where no Clerk session exists; the application
+ * never mints one. It is signed with the same key as an analysis credential, so
+ * whoever holds the key could already forge those.
+ */
+export function mintOrganizationToken(orgId: string, ttl: number = 5 * 60): string {
+  const iat = Math.floor(Date.now() / 1000);
+  const header = { alg: "RS256", typ: "JWT", kid: KEY_ID };
+  const claims = {
+    iss: ISSUER,
+    aud: AUDIENCE,
+    sub: `organization:${orgId}`,
+    iat,
+    exp: iat + ttl,
+    o: { id: orgId },
+    org_id: orgId,
+  };
+  const body = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
+  return `${body}.${b64url(createSign("RSA-SHA256").update(body).sign(privateKey()))}`;
+}
+
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 

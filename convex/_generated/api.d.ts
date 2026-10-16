@@ -13,6 +13,7 @@ import type * as crons from "../crons.js";
 import type * as evalData from "../evalData.js";
 import type * as explanations from "../explanations.js";
 import type * as graph from "../graph.js";
+import type * as installations from "../installations.js";
 import type * as lib_limits from "../lib/limits.js";
 import type * as lib_org from "../lib/org.js";
 import type * as lib_repoUrl from "../lib/repoUrl.js";
@@ -34,6 +35,7 @@ declare const fullApi: ApiFromModules<{
   evalData: typeof evalData;
   explanations: typeof explanations;
   graph: typeof graph;
+  installations: typeof installations;
   "lib/limits": typeof lib_limits;
   "lib/org": typeof lib_org;
   "lib/repoUrl": typeof lib_repoUrl;

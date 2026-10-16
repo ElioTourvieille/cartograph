@@ -11,6 +11,7 @@ import { BATCH } from "@/convex/lib/limits";
 import { SKIPPED_SHOWN, type Stage } from "@/convex/lib/validators";
 import type { ParseResult } from "@/parser/types";
 import { parseResult } from "@/parser/validate";
+import { GithubAppError, InstallationGone, installationToken } from "@/lib/github/app";
 import { downloadArchive, latestCommit, PipelineError, type NotExtracted } from "./github";
 
 // One run, end to end: fetch, select, parse, store. It runs in the Next.js
@@ -51,8 +52,37 @@ export async function runPipeline(analysisId: Id<"analyses">): Promise<void> {
     const target = await convex.mutation(api.pipeline.begin, base);
     claimed = true;
 
+    // --- access (private repositories only) ----------------------------------
+    // The installation came off the analysis row, never from a caller. A token
+    // is minted for this run, narrowed to reading contents, held in this
+    // variable and dropped once the archive is down. A public repository takes
+    // none of this and uses no token at all.
+    let token: string | undefined;
+    if (target.installation !== null) {
+      stage = "access";
+      const { githubId, account, removed } = target.installation;
+      if (removed) {
+        throw new PipelineError(
+          `L'installation GitHub de ${account} n'est plus connectée : le dépôt ne peut plus être relu. L'analyse existante reste lisible.`,
+        );
+      }
+      try {
+        token = await installationToken(githubId);
+      } catch (error) {
+        if (error instanceof InstallationGone) {
+          await convex.mutation(api.pipeline.installationGone, base);
+          throw new PipelineError(
+            `L'installation GitHub de ${account} a disparu : l'App a été désinstallée sur GitHub. L'analyse existante reste lisible.`,
+          );
+        }
+        if (error instanceof GithubAppError) throw new PipelineError(error.message);
+        throw error;
+      }
+      stage = "fetch";
+    }
+
     // --- fetch -------------------------------------------------------------
-    const sha = await latestCommit(target.owner, target.name);
+    const sha = await latestCommit(target.owner, target.name, token);
     await convex.mutation(api.pipeline.setStage, {
       ...base,
       stage: "fetch",
@@ -60,7 +90,8 @@ export async function runPipeline(analysisId: Id<"analyses">): Promise<void> {
       commitSha: sha,
     });
     dir = await mkdtemp(join(tmpdir(), "cartograph-"));
-    const notExtracted = await downloadArchive(target.owner, target.name, sha, dir);
+    const notExtracted = await downloadArchive(target.owner, target.name, sha, dir, token);
+    token = undefined; // thrown away: nothing after this reads GitHub
     lap("fetch");
 
     // --- select, parse ------------------------------------------------------
@@ -154,7 +185,15 @@ export async function runPipeline(analysisId: Id<"analyses">): Promise<void> {
     }
   } finally {
     clearInterval(beat);
-    if (dir !== undefined) await rm(dir, { recursive: true, force: true }).catch(() => {});
+    // The checkout is temporary: it exists for the length of the run and is
+    // removed when it ends, success or failure, along with the parser's result
+    // file that sits beside it.
+    if (dir !== undefined) {
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+      await rm(join(dir, "..", `${dir.split(/[\\/]/).pop()}-resultat.json`), { force: true }).catch(
+        () => {},
+      );
+    }
   }
 }
 

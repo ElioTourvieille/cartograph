@@ -96,6 +96,78 @@ export const start = orgMutation({
   },
 });
 
+// A private repository: the same rules as a public one (one analysis per
+// repository, created under the person's verified token), plus the
+// installation it will be read through. That installation is a row of THIS
+// organization, still connected: another organization's id reads as missing,
+// so naming it starts nothing. The repository itself was checked against the
+// installation by the server before this was called; the run checks again when
+// it fetches, and fails at its "access" stage if the repository is out of reach.
+export const startPrivate = orgMutation({
+  args: { installationId: v.id("installations"), repo: v.string() },
+  returns: v.object({ analysisId: v.id("analyses"), created: v.boolean() }),
+  handler: async (ctx, { installationId, repo }) => {
+    const installation = await ctx.db.get("installations", installationId);
+    if (installation === null) throw new ConvexError("Installation introuvable.");
+    if (installation.removedAt !== undefined) {
+      throw new ConvexError(
+        `L'installation GitHub de ${installation.account} n'est plus connectée.`,
+      );
+    }
+    const parsed = parseRepoUrl(`https://github.com/${repo}`);
+
+    const project = await ctx.db.projectByRepoKey(parsed.key);
+    if (project !== null) {
+      const existing = await ctx.db.analysisOfProject(project._id);
+      if (existing !== null) {
+        // The address was tried as a public repository first and failed, which is
+        // what a private repository does. There is one analysis per repository,
+        // so that failed row is the one that takes the installation and runs
+        // again, instead of leaving the person stuck on the failure. An analysis
+        // that finished (a public repository) or is still running is left as it is.
+        if (existing.installationId === undefined && existing.status === "failed") {
+          const now = Date.now();
+          await ctx.db.patchAnalysis(existing._id, {
+            installationId,
+            status: "queued",
+            stage: "access",
+            message: "En attente de démarrage.",
+            error: undefined,
+            failedStage: undefined,
+            commitSha: undefined,
+            coverage: undefined,
+            frameworks: undefined,
+            startedAt: now,
+            updatedAt: now,
+            finishedAt: undefined,
+          });
+          return { analysisId: existing._id, created: true };
+        }
+        return { analysisId: existing._id, created: false };
+      }
+    }
+    const projectId =
+      project?._id ??
+      (await ctx.db.insertProject({
+        repoUrl: parsed.url,
+        owner: parsed.owner,
+        name: parsed.name,
+        repoKey: parsed.key,
+      }));
+    const now = Date.now();
+    const analysisId = await ctx.db.insertAnalysis({
+      projectId,
+      installationId,
+      status: "queued",
+      stage: "access",
+      message: "En attente de démarrage.",
+      startedAt: now,
+      updatedAt: now,
+    });
+    return { analysisId, created: true };
+  },
+});
+
 // Re-running is a deliberate act on an existing analysis. This only puts it
 // back in the queue; the previous rows are cleared by the run itself, in
 // batches, before it writes new ones.
@@ -108,10 +180,18 @@ export const requestRerun = orgMutation({
     if (analysis.status === "queued" || analysis.status === "parsing") {
       throw new ConvexError("Une analyse est déjà en cours pour ce dépôt.");
     }
+    if (analysis.installationId !== undefined) {
+      const installation = await ctx.db.get("installations", analysis.installationId);
+      if (installation === null || installation.removedAt !== undefined) {
+        throw new ConvexError(
+          "L'installation GitHub de ce dépôt n'est plus connectée : l'analyse reste lisible, mais ne peut plus être relancée.",
+        );
+      }
+    }
     const now = Date.now();
     await ctx.db.patchAnalysis(analysisId, {
       status: "queued",
-      stage: "fetch",
+      stage: analysis.installationId === undefined ? "fetch" : "access",
       message: "En attente de démarrage.",
       error: undefined,
       failedStage: undefined,
@@ -149,6 +229,9 @@ export const progress = orgQuery({
       commitSha: v.union(v.string(), v.null()),
       coverage: v.union(coverageValidator, v.null()),
       frameworks: v.array(v.string()),
+      // Set for a private repository: the account it is read through, and
+      // whether that installation is still connected.
+      access: v.union(v.null(), v.object({ account: v.string(), removed: v.boolean() })),
     }),
   ),
   handler: async (ctx, { analysisId }) => {
@@ -157,6 +240,8 @@ export const progress = orgQuery({
     const a = await ctx.db.get("analyses", id);
     if (a === null) return null;
     const project = await ctx.db.get("projects", a.projectId);
+    const installation =
+      a.installationId === undefined ? null : await ctx.db.get("installations", a.installationId);
     return {
       id,
       status: a.status,
@@ -172,6 +257,12 @@ export const progress = orgQuery({
       commitSha: a.commitSha ?? null,
       coverage: a.coverage ?? null,
       frameworks: a.frameworks ?? [],
+      access:
+        a.installationId === undefined
+          ? null
+          : installation === null
+            ? { account: "", removed: true }
+            : { account: installation.account, removed: installation.removedAt !== undefined },
     };
   },
 });

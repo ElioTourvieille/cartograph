@@ -28,6 +28,83 @@ export const seedTwoOrgs = internalMutation({
   },
 });
 
+// Two organizations that each have a GitHub installation and a private
+// analysis made through it, for the installation isolation check
+// (scripts/check-installations.ts). Test organizations only; delete them with
+// orgData:deleteOrgData afterwards. GitHub ids are in a range no real
+// installation has.
+export const seedInstallations = internalMutation({
+  args: { orgA: v.string(), orgB: v.string() },
+  returns: v.array(
+    v.object({
+      orgId: v.string(),
+      githubId: v.number(),
+      installationId: v.id("installations"),
+      analysisId: v.id("analyses"),
+    }),
+  ),
+  handler: async (ctx, { orgA, orgB }) => {
+    if (orgA === orgB) throw new Error("Les deux organisations doivent différer.");
+    const out = [];
+    for (const [orgId, githubId] of [
+      [orgA, 7_000_001],
+      [orgB, 7_000_002],
+    ] as const) {
+      const installationId = await ctx.db.insert("installations", {
+        orgId,
+        githubId,
+        account: `compte-${githubId}`,
+        connectedAt: Date.now(),
+      });
+      const projectId = await ctx.db.insert("projects", {
+        orgId,
+        repoUrl: `https://github.com/compte-${githubId}/prive`,
+        owner: `compte-${githubId}`,
+        name: "prive",
+        repoKey: `compte-${githubId}/prive`,
+      });
+      const analysisId = await ctx.db.insert("analyses", {
+        orgId,
+        projectId,
+        installationId,
+        status: "complete",
+        commitSha: "0".repeat(40),
+      });
+      await ctx.db.insert("files", {
+        orgId,
+        analysisId,
+        path: "src/index.ts",
+        folder: "src",
+        lines: 1,
+        contentHash: "seed",
+      });
+      // Two analyses made WITHOUT an installation: one that failed (a private
+      // repository pasted as a public address) and one that finished (a public
+      // repository), to check which of them a later private start may take over.
+      for (const [name, status] of [
+        ["echec", "failed"],
+        ["public", "complete"],
+      ] as const) {
+        const project = await ctx.db.insert("projects", {
+          orgId,
+          repoUrl: `https://github.com/compte-${githubId}/${name}`,
+          owner: `compte-${githubId}`,
+          name,
+          repoKey: `compte-${githubId}/${name}`,
+        });
+        await ctx.db.insert("analyses", {
+          orgId,
+          projectId: project,
+          status,
+          ...(status === "failed" ? { error: "Dépôt introuvable ou privé.", failedStage: "fetch" as const } : {}),
+        });
+      }
+      out.push({ orgId, githubId, installationId, analysisId });
+    }
+    return out;
+  },
+});
+
 type SeedAnalysis = {
   name: string;
   status: "queued" | "parsing" | "complete" | "failed";

@@ -2,7 +2,8 @@ import { fetchMutation, fetchQuery } from "convex/nextjs";
 import { traceable } from "langsmith/traceable";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { AiError } from "./client";
+import { accessOf, tokenFor } from "@/lib/github/access";
+import { AiError, privateTracing } from "./client";
 import { classifyBatch } from "./classify-core";
 import { loadGraph, neighboursOf } from "./context";
 import { CLASSIFY_MODEL, PROMPT_VERSION } from "./models";
@@ -52,6 +53,8 @@ export async function classifyUnidentified(
   token: string,
   input: { analysisId: Id<"analyses">; skip: number },
 ): Promise<Classification> {
+  // Private or public, read off the analysis row under the person's token.
+  const access = await accessOf(token, input.analysisId);
   // The token stays in this closure: a traced function records its arguments.
   const run = traceable(
     async (args: { analysisId: Id<"analyses">; skip: number }): Promise<Classification> => {
@@ -70,11 +73,17 @@ export async function classifyUnidentified(
         .sort();
       const todo = unidentified.slice(skip, skip + PER_CALL);
 
+      // One token for this call's reads of a private repository, minted now and
+      // dropped with the call. Public repositories use none.
+      const ghToken = todo.length === 0 ? undefined : await tokenFor(access);
+
       let saved = 0;
       let skipped = 0;
       for (let i = 0; i < todo.length; i += BATCH) {
         const batch = todo.slice(i, i + BATCH);
-        const heads = await mapLimit(batch, 8, (path) => fetchSource(owner, name, commit, path));
+        const heads = await mapLimit(batch, 8, (path) =>
+          fetchSource(owner, name, commit, path, ghToken),
+        );
         const readable = batch.filter((_, k) => heads[k] !== null);
         skipped += batch.length - readable.length;
         if (readable.length === 0) continue;
@@ -85,6 +94,7 @@ export async function classifyUnidentified(
             imports: neighboursOf(graph, path).imports,
             head: heads[batch.indexOf(path)] ?? "",
           })),
+          { private: access.private },
         );
         skipped += readable.length - valid.length;
         if (valid.length === 0) continue;
@@ -112,7 +122,8 @@ export async function classifyUnidentified(
     {
       name: "classify-files",
       run_type: "chain",
-      tags: ["classify"],
+      ...(access.private ? { client: privateTracing() } : {}),
+      tags: ["classify", ...(access.private ? ["private"] : [])],
       metadata: { model: CLASSIFY_MODEL, promptVersion: PROMPT_VERSION },
     },
   );

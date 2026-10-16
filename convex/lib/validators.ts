@@ -2,11 +2,16 @@ import { v } from "convex/values";
 
 // Shapes shared by the schema and the functions that read and write them.
 
-/** The named stages of a run, in order. */
-export const STAGES = ["fetch", "select", "parse", "store"] as const;
+/**
+ * The named stages of a run, in order. "access" opens a run on a private
+ * repository only: it is where the installation is checked and a token minted,
+ * so "the installation is gone" fails somewhere that says so.
+ */
+export const STAGES = ["access", "fetch", "select", "parse", "store"] as const;
 export type Stage = (typeof STAGES)[number];
 
 export const stageValidator = v.union(
+  v.literal("access"),
   v.literal("fetch"),
   v.literal("select"),
   v.literal("parse"),

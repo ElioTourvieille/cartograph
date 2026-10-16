@@ -9,6 +9,7 @@ import { AiError, aiStatus, type AiStatus } from "@/lib/ai/client";
 import { classifyUnidentified, type Classification } from "@/lib/ai/classify";
 import { explainFile, explainFolder, type Explanation } from "@/lib/ai/explain";
 import { fetchSource, sha256 } from "@/lib/ai/source";
+import { accessOf, RepoUnreachable, tokenFor } from "@/lib/github/access";
 import { latestCommit } from "@/lib/pipeline/github";
 
 // What the explain pane and the classify control call. Every model call runs
@@ -38,7 +39,7 @@ export type Freshness =
 const jwt = async (): Promise<string | null> => (await auth()).getToken();
 
 function reason(error: unknown): string {
-  if (error instanceof AiError) return error.message;
+  if (error instanceof AiError || error instanceof RepoUnreachable) return error.message;
   if (error instanceof ConvexError) return String(error.data);
   console.error("[actions/ai]", error);
   return "Le modèle n'a pas pu répondre. Réessayez dans un instant.";
@@ -104,7 +105,10 @@ export async function freshnessAction(
       return { ok: false };
     }
     const [owner, name] = progress.repo.split("/");
-    const head = await latestCommit(owner, name);
+    // A private repository is read with a token minted for this request; if the
+    // installation is gone the answer is simply "cannot tell", not a guess.
+    const ghToken = await tokenFor(await accessOf(token, analysisId));
+    const head = await latestCommit(owner, name, ghToken);
     const repoMoved = head !== progress.commitSha;
 
     if (path === null) return { ok: true, repoMoved, fileChanged: null, head };
@@ -115,7 +119,7 @@ export async function freshnessAction(
       { analysisId, paths: [path] },
       { token },
     );
-    const current = await fetchSource(owner, name, head, path);
+    const current = await fetchSource(owner, name, head, path, ghToken);
     // A file that is gone at the head counts as changed.
     const fileChanged = stored === undefined || current === null || sha256(current) !== stored.hash;
     return { ok: true, repoMoved, fileChanged, head };

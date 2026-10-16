@@ -13,6 +13,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           Cartograph
         </Link>
         <OrganizationSwitcher hidePersonal />
+        <Link href="/parametres" className="text-xs text-muted hover:text-foreground">
+          Paramètres
+        </Link>
         <div className="ml-auto flex items-center gap-3">
           <ThemeControl />
           <UserButton />

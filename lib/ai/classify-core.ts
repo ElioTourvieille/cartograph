@@ -76,7 +76,10 @@ function readAssignments(input: unknown): Assigned[] {
  * file of the batch with an allowed role; anything else is dropped here, after
  * the answer, whatever the schema promised.
  */
-export async function classifyBatch(items: readonly ClassifyItem[]): Promise<Assigned[]> {
+export async function classifyBatch(
+  items: readonly ClassifyItem[],
+  options: { private?: boolean } = {},
+): Promise<Assigned[]> {
   if (items.length === 0) return [];
   const described = items
     .map((item) =>
@@ -88,7 +91,9 @@ export async function classifyBatch(items: readonly ClassifyItem[]): Promise<Ass
     )
     .join("\n\n");
 
-  const message = await ai().messages.create({
+  // A private repository's file heads go to the model like any other, but the
+  // call is traced through the masked client: no prompt, no answer in the store.
+  const message = await ai({ private: options.private === true }).messages.create({
     model: CLASSIFY_MODEL,
     max_tokens: 1500,
     system: SYSTEM,
