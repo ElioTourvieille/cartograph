@@ -1,6 +1,6 @@
 # Cartograph
 
-A local app that reads a public GitHub repository (TypeScript or JavaScript) and draws it as a dependency map: folders as boxes, imports as lines between them. The interface is entirely in French.
+An app that reads a GitHub repository (TypeScript or JavaScript) and draws it as a dependency map: folders as boxes, imports as lines between them. Public repositories are pasted by URL; private ones are reached through a read-only GitHub App that an organization installs on the repositories it chooses. The interface is entirely in French.
 
 Select a file and see what it imports, what imports it, and what breaks two levels out if it changes. Ask for an explanation and get a paragraph written from that file and its real neighbours. A chat panel lets you ask the repository a question and shows the lookups behind each answer.
 
@@ -26,6 +26,8 @@ Cartograph also doesn't grade code: no scores, ratings or "issues found". It exp
 - Clerk for sign-in and organizations
 - Convex for the database, server functions and live queries
 - Anthropic SDK through one wrapped client, traced with LangSmith
+- A read-only GitHub App for private repositories (no credential outlives a run)
+- Deep Agents on a local LangGraph server for the chat agent, a separate process in [`agent/`](agent)
 - Tailwind v4
 - pnpm
 
@@ -35,7 +37,7 @@ Spec driven. Nothing gets built without a spec, and one phase is built at a time
 
 - [`CLAUDE.md`](CLAUDE.md): the rules, always in force.
 - [`docs/project-doc.md`](docs/project-doc.md): what the app is and the reasoning behind every decision.
-- [`docs/specs/`](docs/specs): one spec per phase (`phase-01.md` to `phase-13.md`). Each describes behaviour and an acceptance check, never filenames.
+- [`docs/specs/`](docs/specs): one spec per phase (`phase-01.md` to `phase-14.md`). Each describes behaviour and an acceptance check, never filenames.
 
 The acceptance check is a list of things done by hand in a browser. There is no test runner or browser driver. Before a phase counts as done, types, lint and build must pass. When a phase comes out wrong, it is reset rather than patched.
 
@@ -54,7 +56,8 @@ The acceptance check is a list of things done by hand in a browser. There is no 
 11. Evals
 12. Chat agent
 13. Landing page
+14. Private repositories
 
 ## Status
 
-No phase is built yet. The repository holds the Create Next App scaffold, the project doc, the rules and the specs.
+All 14 phases are built and merged into `master`. The chat agent runs as its own process (see [`agent/README.md`](agent/README.md)); the app works without it.
